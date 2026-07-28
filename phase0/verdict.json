@@ -1,0 +1,40 @@
+{
+ "date": "2026-07-28",
+ "gate": {
+  "criterion": "단일 스트림(배치1, ctx 8k) ≥ 5 tok/s (대화형 최소선); FAIL 기준: 낙관에서도 < 3 tok/s",
+  "verdict": "PASS"
+ },
+ "best_real": {
+  "strategy": "TP8PP4",
+  "step_ms": 21.355618754736284,
+  "tok_s_user": 46.826084108577675,
+  "tok_s_system": 46.826084108577675
+ },
+ "best_opt": {
+  "strategy": "TP8PP4",
+  "step_ms": 11.452643196974135,
+  "tok_s_user": 87.31608789350975,
+  "tok_s_system": 87.31608789350975
+ },
+ "best_throughput_real_b32": {
+  "strategy": "EP32",
+  "step_ms": 55.55966327888729,
+  "tok_s_user": 17.998669196038858,
+  "tok_s_system": 575.9574142732434
+ },
+ "flat_parallel_floor_ms": 2.0990582393330066,
+ "pins": {
+  "hf": "moonshotai/Kimi-K3@9f62e4e9",
+  "vllm_main": "d223c900",
+  "vllm_kimi_k3": "0498dc7e",
+  "hatir": "3a60d38",
+  "hat_schema": "98ea3f7"
+ },
+ "files": [
+  "phase0/twin_a100_x32.json",
+  "phase0/k3_model.py",
+  "phase0/results.json",
+  "phase0/REPORT.md",
+  "phase0/verdict.json"
+ ]
+}

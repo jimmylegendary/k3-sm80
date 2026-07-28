@@ -1,0 +1,190 @@
+{
+ "_comment": "32x A100-80GB SXM4 (4 nodes x 8 GPU, HGX/DGX A100급) HAT 시스템 트윈. 계층: IB(rack) -> NVLink3/NVSwitch(tray) -> HBM2e -> L2 -> SMEM -> PE(SM). 수치 출처: k3-sm80/recon/a100-comms.md (A100 80GB datasheet JAN21, HGX A100 datasheet, Ampere In-Depth blog, CUDA Ampere Tuning Guide, nccl-tests #149, nccl #949, NCCL 2.27 blog, arXiv:2507.04786, CUDA graphs blog). 패턴: hat-schema/examples/dgx-h100-x4.hw. 대역 단위: 전부 bytes/s. fabric의 bandwidth_bps/peer_bandwidth_bps는 하드웨어 방향당 상한이고, 코스트 모델이 실제로 쓰는 NCCL 실효치(busbw)와 알파는 meta.comm_scenarios의 보수(real)/낙관(opt) 2안이다.",
+ "level_id": "ib",
+ "role": "switch",
+ "scope": "rack",
+ "residency": "sw_managed",
+ "capacity_bytes": 2748779069440,
+ "bandwidth_bps": 25000000000.0,
+ "fabric": {
+  "_comment": "노드 간 InfiniBand HDR200 (포트당 200Gb/s=25GB/s). 사내 구성 미상 -> 2안: 낙관=DGX 표준 8x HDR(GPU당 NIC 1, node 200GB/s), 보수=2x HDR(node 50GB/s, nccl#949 실측 busbw 27.2GB/s). 구조 필드는 낙관(표준) 구성을 적되, 모델 소비 값은 meta.comm_scenarios.",
+  "protocol": "infiniband_hdr200",
+  "topology_type": "fat_tree_rail_optimized",
+  "port_speed_bps": 25000000000.0,
+  "nics_per_node": 8,
+  "node_injection_bps": 200000000000.0
+ },
+ "children": [
+  {
+   "level_id": "nvlink",
+   "role": "fabric",
+   "scope": "tray",
+   "residency": "sw_managed",
+   "capacity_bytes": 687194767360,
+   "bandwidth_bps": 300000000000.0,
+   "peer_bandwidth_bps": 300000000000.0,
+   "duplex": "full",
+   "fabric": {
+    "_comment": "GPU당 NVLink3 12링크(링크당 25GB/s/방향) = 300GB/s/방향 = 600GB/s 양방향, NVSwitch(2세대) 6개 full-fabric(NV12). NCCL ring allreduce 실효 busbw 실측 225.5GB/s (nccl-tests #149) -> 모델값 보수 200 / 낙관 235 (meta.comm_scenarios).",
+    "protocol": "nvlink3",
+    "topology_type": "all_to_all",
+    "links_per_gpu": 12,
+    "link_bps": 25000000000.0,
+    "switches_per_node": 6
+   },
+   "children": [
+    {
+     "level_id": "hbm",
+     "role": "hbm",
+     "scope": "package",
+     "residency": "sw_managed",
+     "capacity_bytes": 85899345920,
+     "bandwidth_bps": 2039000000000.0,
+     "line_bytes": 32,
+     "mem_standard": "hbm2e",
+     "bus_width_bits": 5120,
+     "pin_rate_gbps": 3.19,
+     "dies_per_stack": 8,
+     "die_density_gbit": 16,
+     "energy_pj_per_byte": 8.0,
+     "provenance": "vendor_datasheet",
+     "children": [
+      {
+       "level_id": "l2",
+       "role": "l2",
+       "scope": "die",
+       "residency": "hw_cache",
+       "capacity_bytes": 41943040,
+       "bandwidth_bps": 5000000000000.0,
+       "line_bytes": 128,
+       "num_channels": 2,
+       "children": [
+        {
+         "level_id": "smem",
+         "role": "shared",
+         "scope": "die",
+         "residency": "hw_cache",
+         "capacity_bytes": 167936,
+         "bandwidth_bps": 19500000000000.0,
+         "line_bytes": 128,
+         "instances": 108,
+         "spatial_axis": "sm",
+         "children": [
+          {
+           "level_id": "pe",
+           "role": "compute",
+           "scope": "soc",
+           "instances": 108,
+           "spatial_axis": "sm",
+           "peak_macs_per_s": 1444000000000.0,
+           "matrix_unit": [16, 8, 16],
+           "dtype_bytes": 2,
+           "acc_dtype_bytes": 4,
+           "clock_hz": 1410000000.0,
+           "process_node": "N7",
+           "subpartitions": 4,
+           "schedulers_per_sm": 4,
+           "units": {
+            "fp32_fma": 64,
+            "int32": 64,
+            "fp64": 32,
+            "tensor_core": 4,
+            "ldst": 32
+           },
+           "exec_hierarchy": {
+            "warp_size": 32,
+            "cta_max_threads": 1024
+           },
+           "mma_isa": [
+            {
+             "name": "mma.sync.aligned.m16n8k16",
+             "sass": "HMMA",
+             "scope": "warp",
+             "mnk": [16, 8, 16],
+             "in_dtype": "bf16",
+             "acc_dtype": "f32",
+             "threads": 32
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "meta": {
+  "tdp_w": 400,
+  "cooling_class": "air",
+  "cluster": {
+   "nodes": 4,
+   "gpus_per_node": 8,
+   "gpus_total": 32,
+   "sms_total": 3456,
+   "dense_bf16_tflops_total": 9984,
+   "hbm_total_gb": 2560,
+   "hbm_bw_total_tbps": 65.2
+  },
+  "gpu_extra": {
+   "_comment": "hatir 트윈 스키마가 직접 표현하지 않아 모델(k3_model.py)이 명시 가산항으로 쓰는 값. fp32/int32 ALU: 108SM x 64lane x 1.41GHz = 9.74e12 ops/s (Marlin류 INT4->bf16 dequant 비용의 분모). smem 164KB/SM은 opt-in carveout(블록당 163KB), L1+smem 합 192KB.",
+   "alu_fp32_ops_per_s": 9740000000000.0,
+   "alu_int32_ops_per_s": 9740000000000.0,
+   "bf16_tensor_tflops": 312,
+   "smem_per_sm_bytes_max": 167936,
+   "l2_bytes": 41943040
+  },
+  "comm_scenarios": {
+   "_comment": "코스트 모델이 소비하는 통신/오버헤드 2안. real=보수(현실): NCCL 기본 + 2x HDR IB + piecewise CUDA graph. opt=낙관: custom/symmetric-memory allreduce + 8x HDR IB + full CUDA graph + MXFP8 dispatch payload. 근거는 recon/a100-comms.md 0절 표(각 값의 1차 출처 명시).",
+   "real": {
+    "nvlink_busbw_bps": 200000000000.0,
+    "ib_node_injection_bps": 50000000000.0,
+    "ib_busbw_bps": 27200000000.0,
+    "ar_alpha_intra_us": 20.0,
+    "ar_alpha_inter_us": 44.0,
+    "a2a_alpha_intra_us": 20.0,
+    "a2a_alpha_inter_us": 44.0,
+    "p2p_alpha_us": 15.0,
+    "launch_gap_us": 1.0,
+    "graph_segment_us": 8.0,
+    "step_cpu_us": 100.0,
+    "dequant_ops_per_param": 4.0,
+    "moe_imbalance": 1.5,
+    "dispatch_payload_bytes": 2,
+    "pp_hidden_streams": 2
+   },
+   "opt": {
+    "nvlink_busbw_bps": 235000000000.0,
+    "ib_node_injection_bps": 200000000000.0,
+    "ib_busbw_bps": 200000000000.0,
+    "ar_alpha_intra_us": 5.0,
+    "ar_alpha_inter_us": 30.0,
+    "a2a_alpha_intra_us": 5.0,
+    "a2a_alpha_inter_us": 30.0,
+    "p2p_alpha_us": 5.0,
+    "launch_gap_us": 0.5,
+    "graph_segment_us": 0.0,
+    "step_cpu_us": 30.0,
+    "dequant_ops_per_param": 2.0,
+    "moe_imbalance": 1.15,
+    "dispatch_payload_bytes": 1,
+    "pp_hidden_streams": 1
+   }
+  },
+  "provenance": {
+   "a100_datasheet": "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/a100-80gb-datasheet-update-nvidia-us-1521051-r2-web.pdf (JAN21 r2)",
+   "hgx_a100": "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/HGX/a100-80gb-hgx-a100-datasheet-us-nvidia-1485640-r6-web.pdf",
+   "ampere_indepth": "https://developer.nvidia.com/blog/nvidia-ampere-architecture-in-depth/",
+   "ampere_tuning": "https://docs.nvidia.com/cuda/ampere-tuning-guide/index.html",
+   "nccl_busbw_intra": "https://github.com/NVIDIA/nccl-tests/issues/149 (NCCL 2.18.1, 8x A100 SXM4)",
+   "nccl_busbw_inter": "https://github.com/NVIDIA/nccl/issues/949 (2 node x 8x A100, 2x HDR, SR-IOV VM)",
+   "nccl_227": "https://developer.nvidia.com/blog/enabling-fast-inference-and-resilient-training-with-nccl-2-27/",
+   "nccl_protocol_alpha": "https://arxiv.org/abs/2507.04786 (Demystifying NCCL, Table I)",
+   "cuda_graphs": "https://developer.nvidia.com/blog/cuda-graphs/",
+   "dgx_a100_ib": "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/nvidia-dgx-a100-datasheet.pdf",
+   "recon": "k3-sm80/recon/a100-comms.md (2026-07-28 스냅샷)"
+  }
+ }
+}

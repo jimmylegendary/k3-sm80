@@ -1,0 +1,2201 @@
+{
+ "date": "2026-07-28",
+ "ctx_default": 8192,
+ "anchor": {
+  "bytes_per_token_gb": 136.959352,
+  "bf16_gb": 111.129779392,
+  "mxfp4_gb": 25.829572608,
+  "flat_parallel_floor_ms": 2.0990582393330066,
+  "recon_ref_gb": 136.96,
+  "recon_ref_floor_ms": 2.1,
+  "closure_ok": true
+ },
+ "validation": [
+  {
+   "level": "ib",
+   "severity": "info",
+   "msg": "ib: no line_bytes — byte-granular movement assumed; set line_bytes = this tier's instruction/burst transfer size to model + validate over-fetch (the 'movement unit')"
+  },
+  {
+   "level": "ib",
+   "severity": "info",
+   "msg": "ib: no energy_pj_per_byte — energy for this tier is 0 (fine if you only want time)"
+  },
+  {
+   "level": "nvlink",
+   "severity": "info",
+   "msg": "nvlink: no line_bytes — byte-granular movement assumed; set line_bytes = this tier's instruction/burst transfer size to model + validate over-fetch (the 'movement unit')"
+  },
+  {
+   "level": "nvlink",
+   "severity": "info",
+   "msg": "nvlink: no energy_pj_per_byte — energy for this tier is 0 (fine if you only want time)"
+  },
+  {
+   "level": "l2",
+   "severity": "info",
+   "msg": "l2: no energy_pj_per_byte — energy for this tier is 0 (fine if you only want time)"
+  },
+  {
+   "level": "smem",
+   "severity": "info",
+   "msg": "smem: no energy_pj_per_byte — energy for this tier is 0 (fine if you only want time)"
+  }
+ ],
+ "results": [
+  {
+   "strategy": "TP8PP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 11.452643196974135,
+   "tok_s_user": 87.31608789350975,
+   "tok_s_system": 87.31608789350975,
+   "breakdown": {
+    "mem_us": 9550.910921229455,
+    "compute_us": 0.0,
+    "comm_alpha_us": 955.0,
+    "comm_bw_us": 21.732275744680884,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 11452.643196974135,
+    "hbm_gb": 19.474307368386917
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 23.401798759537,
+   "tok_s_user": 42.73175794200295,
+   "tok_s_system": 341.8540635360236,
+   "breakdown": {
+    "mem_us": 21347.958473579558,
+    "compute_us": 0.0,
+    "comm_alpha_us": 955.0,
+    "comm_bw_us": 173.84028595744707,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 23401.798759537003,
+    "hbm_gb": 43.52848732762824
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 55.966955833287365,
+   "tok_s_user": 17.867686121410088,
+   "tok_s_system": 571.7659558851228,
+   "breakdown": {
+    "mem_us": 53366.54982652129,
+    "compute_us": 25.05254293628806,
+    "comm_alpha_us": 955.0,
+    "comm_bw_us": 695.3534638297883,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 55966.955833287364,
+    "hbm_gb": 108.84887522427756
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 21.355618754736284,
+   "tok_s_user": 46.826084108577675,
+   "tok_s_system": 46.826084108577675,
+   "breakdown": {
+    "mem_us": 7955.981956050447,
+    "compute_us": 2495.9123186858346,
+    "comm_alpha_us": 5640.0,
+    "comm_bw_us": 32.72448000000003,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 21355.618754736282,
+    "hbm_gb": 19.474307368386917
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 39.24831742279324,
+   "tok_s_user": 25.478799236862457,
+   "tok_s_system": 203.83039389489966,
+   "breakdown": {
+    "mem_us": 9352.608026746542,
+    "compute_us": 18762.9314760467,
+    "comm_alpha_us": 5640.0,
+    "comm_bw_us": 261.7779200000002,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 39248.31742279324,
+    "hbm_gb": 43.52848732762824
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 87.33313517762471,
+   "tok_s_user": 11.450407659889052,
+   "tok_s_system": 366.41304511644967,
+   "breakdown": {
+    "mem_us": 14143.636753530755,
+    "compute_us": 61271.39442409396,
+    "comm_alpha_us": 5640.0,
+    "comm_bw_us": 1047.1040000000007,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 87333.13517762472,
+    "hbm_gb": 108.84887522427756
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 6.2093672067828445,
+   "tok_s_user": 161.04700635318252,
+   "tok_s_system": 161.04700635318252,
+   "breakdown": {
+    "mem_us": 4307.634931038164,
+    "compute_us": 0.0,
+    "comm_alpha_us": 955.0,
+    "comm_bw_us": 21.732275744680884,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 6209.367206782845,
+    "hbm_gb": 8.783267624386866
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 17.856918693455,
+   "tok_s_user": 56.00070298614982,
+   "tok_s_system": 448.00562388919855,
+   "breakdown": {
+    "mem_us": 15796.815271763484,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 955.0,
+    "comm_bw_us": 173.84028595744707,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 17856.918693455,
+    "hbm_gb": 32.21853833912564
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 49.816442123010575,
+   "tok_s_user": 20.073693691948602,
+   "tok_s_system": 642.3581981423553,
+   "breakdown": {
+    "mem_us": 46577.74089186777,
+    "compute_us": 663.3477673130212,
+    "comm_alpha_us": 955.0,
+    "comm_bw_us": 695.3534638297883,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 49816.44212301057,
+    "hbm_gb": 95.92256523051799
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 15.211359411038163,
+   "tok_s_user": 65.74034397440819,
+   "tok_s_system": 65.74034397440819,
+   "breakdown": {
+    "mem_us": 4307.634931038164,
+    "compute_us": 0.0,
+    "comm_alpha_us": 5640.0,
+    "comm_bw_us": 32.72448000000003,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 15211.359411038164,
+    "hbm_gb": 8.783267624386866
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 26.935856327497557,
+   "tok_s_user": 37.12523514536075,
+   "tok_s_system": 297.001881162886,
+   "breakdown": {
+    "mem_us": 15796.815271763484,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 5640.0,
+    "comm_bw_us": 261.7779200000002,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 26935.856327497557,
+    "hbm_gb": 32.21853833912564
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8PP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 59.15919265918079,
+   "tok_s_user": 16.903543727532803,
+   "tok_s_system": 540.9133992810497,
+   "breakdown": {
+    "mem_us": 46577.74089186777,
+    "compute_us": 663.3477673130212,
+    "comm_alpha_us": 5640.0,
+    "comm_bw_us": 1047.1040000000007,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 59159.192659180786,
+    "hbm_gb": 95.92256523051799
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 19.341862595264136,
+   "tok_s_user": 51.70132892190282,
+   "tok_s_system": 51.70132892190282,
+   "breakdown": {
+    "mem_us": 16519.609805962995,
+    "compute_us": 0.0,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 22.25278930114039,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 19341.862595264134,
+    "hbm_gb": 33.19844508555855
+   },
+   "mem": {
+    "worst_weights_gb": 53.42823232,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 466,
+    "max_seqs_256k_global": 20,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 32.08015416916198,
+   "tok_s_user": 31.171920020299662,
+   "tok_s_system": 249.3753601623973,
+   "breakdown": {
+    "mem_us": 29178.15759092307,
+    "compute_us": 0.0,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 101.99657823891052,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 32080.154169161982,
+    "hbm_gb": 55.847643115327685
+   },
+   "mem": {
+    "worst_weights_gb": 53.42823232,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 466,
+    "max_seqs_256k_global": 20,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 66.55676817381126,
+   "tok_s_user": 15.024767990364648,
+   "tok_s_system": 480.79257569166873,
+   "breakdown": {
+    "mem_us": 63348.78954085562,
+    "compute_us": 0.0,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 407.97863295564207,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 66556.76817381126,
+    "hbm_gb": 117.26048479682932
+   },
+   "mem": {
+    "worst_weights_gb": 53.42823232,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 466,
+    "max_seqs_256k_global": 20,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 34.49650814398282,
+   "tok_s_user": 28.988441259798307,
+   "tok_s_system": 28.988441259798307,
+   "breakdown": {
+    "mem_us": 14695.855661382286,
+    "compute_us": 3743.8684780287504,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 33.78400457178645,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 34496.50814398282,
+    "hbm_gb": 33.19844508555855
+   },
+   "mem": {
+    "worst_weights_gb": 53.42823232,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 466,
+    "max_seqs_256k_global": 20,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 59.78969931071082,
+   "tok_s_user": 16.72528899674293,
+   "tok_s_system": 133.80231197394343,
+   "breakdown": {
+    "mem_us": 15466.81790006649,
+    "compute_us": 28144.397214070046,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 155.4841965742922,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 59789.69931071082,
+    "hbm_gb": 55.847643115327685
+   },
+   "mem": {
+    "worst_weights_gb": 53.42823232,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 466,
+    "max_seqs_256k_global": 20,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 127.09013472695548,
+   "tok_s_user": 7.868431347157134,
+   "tok_s_system": 251.7898031090283,
+   "breakdown": {
+    "mem_us": 18575.692798921908,
+    "compute_us": 91869.5128217364,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 621.9291062971689,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 127090.13472695548,
+    "hbm_gb": 117.26048479682932
+   },
+   "mem": {
+    "worst_weights_gb": 53.42823232,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 466,
+    "max_seqs_256k_global": 20,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 9.240052926995313,
+   "tok_s_user": 108.22448831201454,
+   "tok_s_system": 108.22448831201454,
+   "breakdown": {
+    "mem_us": 6417.800137694171,
+    "compute_us": 0.0,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 22.25278930114039,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 9240.052926995313,
+    "hbm_gb": 12.615099421558515
+   },
+   "mem": {
+    "worst_weights_gb": 46.648292319,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 614,
+    "max_seqs_256k_global": 26,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 21.629278472850693,
+   "tok_s_user": 46.23362731471653,
+   "tok_s_system": 369.86901851773223,
+   "breakdown": {
+    "mem_us": 18727.28189461178,
+    "compute_us": 0.0,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 101.99657823891052,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 21629.278472850692,
+    "hbm_gb": 34.6453882068251
+   },
+   "mem": {
+    "worst_weights_gb": 46.648292319,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 614,
+    "max_seqs_256k_global": 26,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 55.19646159151603,
+   "tok_s_user": 18.117103364352346,
+   "tok_s_system": 579.7473076592751,
+   "breakdown": {
+    "mem_us": 51975.956687092235,
+    "compute_us": 12.52627146814403,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 407.97863295564207,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 55196.461591516025,
+    "hbm_gb": 94.44186888306982
+   },
+   "mem": {
+    "worst_weights_gb": 46.648292319,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 614,
+    "max_seqs_256k_global": 26,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 23.013339318724995,
+   "tok_s_user": 43.45305938223149,
+   "tok_s_system": 43.45305938223149,
+   "breakdown": {
+    "mem_us": 6956.55531415321,
+    "compute_us": 0.0,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 33.78400457178645,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 23013.339318724997,
+    "hbm_gb": 12.615099421558515
+   },
+   "mem": {
+    "worst_weights_gb": 46.648292319,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 614,
+    "max_seqs_256k_global": 26,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 38.956244599281405,
+   "tok_s_user": 25.669825474359154,
+   "tok_s_system": 205.35860379487323,
+   "breakdown": {
+    "mem_us": 22777.76040270711,
+    "compute_us": 0.0,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 155.4841965742922,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 38956.2445992814,
+    "hbm_gb": 34.6453882068251
+   },
+   "mem": {
+    "worst_weights_gb": 46.648292319,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 614,
+    "max_seqs_256k_global": 26,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP4EP8PP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 81.86001596045571,
+   "tok_s_user": 12.215976118097412,
+   "tok_s_system": 390.9112357791172,
+   "breakdown": {
+    "mem_us": 65202.56058269039,
+    "compute_us": 12.52627146814403,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 621.9291062971689,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 81860.01596045571,
+    "hbm_gb": 94.44186888306982
+   },
+   "mem": {
+    "worst_weights_gb": 46.648292319,
+    "per_seq_8k_mb": 92.40576,
+    "per_seq_256k_gb": 2.140274688,
+    "state_per_seq_mb": 26.345472,
+    "max_seqs_8k_global": 614,
+    "max_seqs_256k_global": 26,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 12.607518014944565,
+   "tok_s_user": 79.31775301170545,
+   "tok_s_system": 79.31775301170545,
+   "breakdown": {
+    "mem_us": 9782.537463941298,
+    "compute_us": 0.0,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 24.980551003268047,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 12607.518014944566,
+    "hbm_gb": 19.461554580176365
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 26.084668073348034,
+   "tok_s_user": 38.33669637612711,
+   "tok_s_system": 306.69357100901686,
+   "breakdown": {
+    "mem_us": 23084.84158532189,
+    "compute_us": 0.0,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 199.82648802614437,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 26084.668073348035,
+    "hbm_gb": 43.42337177990697
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 62.62403608383629,
+   "tok_s_user": 15.96830965447957,
+   "tok_s_system": 510.98590894334626,
+   "breakdown": {
+    "mem_us": 58999.68526879542,
+    "compute_us": 25.05254293628806,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 799.2982721045776,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 62624.03608383629,
+    "hbm_gb": 108.4271413141003
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 27.763465241961175,
+   "tok_s_user": 36.01855860876541,
+   "tok_s_system": 36.01855860876541,
+   "breakdown": {
+    "mem_us": 7958.783319360634,
+    "compute_us": 3743.8684780287504,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 37.81344457178639,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 27763.465241961174,
+    "hbm_gb": 19.461554580176365
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 53.84338874510971,
+   "tok_s_user": 18.572382298111286,
+   "tok_s_system": 148.5790583848903,
+   "breakdown": {
+    "mem_us": 9373.501894465378,
+    "compute_us": 28144.397214070046,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 302.4896365742911,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 53843.38874510971,
+    "hbm_gb": 43.42337177990697
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 123.3541047578321,
+   "tok_s_user": 8.106742795168373,
+   "tok_s_system": 259.4157694453879,
+   "breakdown": {
+    "mem_us": 14226.588526862304,
+    "compute_us": 91894.56536467263,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 1209.9508662971643,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 123354.1047578321,
+    "hbm_gb": 108.4271413141003
+   },
+   "mem": {
+    "worst_weights_gb": 49.58270272,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 321,
+    "max_seqs_256k_global": 11,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 7.357256124998501,
+   "tok_s_user": 135.92023751928355,
+   "tok_s_system": 135.92023751928355,
+   "breakdown": {
+    "mem_us": 4532.275573995233,
+    "compute_us": 0.0,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 24.980551003268047,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 7357.256124998501,
+    "hbm_gb": 8.770514836176345
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 20.48727175602743,
+   "tok_s_user": 48.81079393627882,
+   "tok_s_system": 390.48635149023056,
+   "breakdown": {
+    "mem_us": 17481.18213226721,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 199.82648802614437,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 20487.27175602743,
+    "hbm_gb": 32.113422791404304
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 56.3020977599922,
+   "tok_s_user": 17.7613275488039,
+   "tok_s_system": 568.3624815617248,
+   "breakdown": {
+    "mem_us": 52039.4517205746,
+    "compute_us": 663.3477673130212,
+    "comm_alpha_us": 1875.0,
+    "comm_bw_us": 799.2982721045776,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 56302.0977599922,
+    "hbm_gb": 95.50083132034075
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 21.13184419502605,
+   "tok_s_user": 47.32194647901942,
+   "tok_s_system": 47.32194647901942,
+   "breakdown": {
+    "mem_us": 5071.030750454267,
+    "compute_us": 0.0,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 37.81344457178639,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 21131.844195026053,
+    "hbm_gb": 8.770514836176345
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 37.863413412671,
+   "tok_s_user": 26.410719738895747,
+   "tok_s_system": 211.28575791116597,
+   "breakdown": {
+    "mem_us": 21531.660640362632,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 302.4896365742911,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 37863.413412671,
+    "hbm_gb": 32.113422791404304
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP8PP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 83.16235424978291,
+   "tok_s_user": 12.024671607978323,
+   "tok_s_system": 384.78949145530635,
+   "breakdown": {
+    "mem_us": 65266.055616172715,
+    "compute_us": 663.3477673130212,
+    "comm_alpha_us": 9320.0,
+    "comm_bw_us": 1209.9508662971643,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 83162.3542497829,
+    "hbm_gb": 95.50083132034075
+   },
+   "mem": {
+    "worst_weights_gb": 45.438959519,
+    "per_seq_8k_mb": 79.233024,
+    "per_seq_256k_gb": 2.127101952,
+    "state_per_seq_mb": 13.172736,
+    "max_seqs_8k_global": 373,
+    "max_seqs_256k_global": 13,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 15.829998045814854,
+   "tok_s_user": 63.17120173393709,
+   "tok_s_system": 63.17120173393709,
+   "breakdown": {
+    "mem_us": 8414.721855505792,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6455.0,
+    "comm_bw_us": 35.27619030906266,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 15829.998045814855,
+    "hbm_gb": 17.036358036176356
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 19.137543078029537,
+   "tok_s_user": 52.25331151040122,
+   "tok_s_system": 418.02649208320975,
+   "breakdown": {
+    "mem_us": 11595.389930025125,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6455.0,
+    "comm_bw_us": 162.1531480044154,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 19137.54307802954,
+    "hbm_gb": 22.731345014180203
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 28.595388671966617,
+   "tok_s_user": 34.970673470172,
+   "tok_s_system": 1119.061551045504,
+   "breakdown": {
+    "mem_us": 20566.77607994896,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6455.0,
+    "comm_bw_us": 648.6125920176617,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 28595.38867196662,
+    "hbm_gb": 38.95873215777196
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 29.38445462321119,
+   "tok_s_user": 34.0315997973325,
+   "tok_s_system": 34.0315997973325,
+   "breakdown": {
+    "mem_us": 7958.783319360634,
+    "compute_us": 935.9671195071876,
+    "comm_alpha_us": 13676.0,
+    "comm_bw_us": 110.70418434336872,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 29384.45462321119,
+    "hbm_gb": 17.036358036176356
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 36.29260010557553,
+   "tok_s_user": 27.5538263197178,
+   "tok_s_system": 220.4306105577424,
+   "breakdown": {
+    "mem_us": 8167.555007311069,
+    "compute_us": 7036.0993035175115,
+    "comm_alpha_us": 13676.0,
+    "comm_bw_us": 709.9457947469552,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 36292.60010557553,
+    "hbm_gb": 22.731345014180203
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 55.55966327888729,
+   "tok_s_user": 17.998669196038858,
+   "tok_s_system": 575.9574142732434,
+   "breakdown": {
+    "mem_us": 9373.501894465378,
+    "compute_us": 22967.3782054341,
+    "comm_alpha_us": 13676.0,
+    "comm_bw_us": 2839.783178987821,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 55559.663278887296,
+    "hbm_gb": 38.95873215777196
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 10.619905079458798,
+   "tok_s_user": 94.16280018681307,
+   "tok_s_system": 94.16280018681307,
+   "breakdown": {
+    "mem_us": 3204.628889149736,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6455.0,
+    "comm_bw_us": 35.27619030906266,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 10619.905079458798,
+    "hbm_gb": 6.416539540176347
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 13.840183604662904,
+   "tok_s_user": 72.25337672999434,
+   "tok_s_system": 578.0270138399547,
+   "breakdown": {
+    "mem_us": 6298.030456658488,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6455.0,
+    "comm_bw_us": 162.1531480044154,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 13840.183604662905,
+    "hbm_gb": 11.956799207054525
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 23.07205310480406,
+   "tok_s_user": 43.342479988995,
+   "tok_s_system": 1386.95935964784,
+   "breakdown": {
+    "mem_us": 15037.177377052325,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 6455.0,
+    "comm_bw_us": 648.6125920176617,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 23072.053104804058,
+    "hbm_gb": 27.78009609933206
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 23.829021867607867,
+   "tok_s_user": 41.9656335688439,
+   "tok_s_system": 41.9656335688439,
+   "breakdown": {
+    "mem_us": 3339.317683264498,
+    "compute_us": 0.0,
+    "comm_alpha_us": 13676.0,
+    "comm_bw_us": 110.70418434336872,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 23829.021867607866,
+    "hbm_gb": 6.416539540176347
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 28.399595878429274,
+   "tok_s_user": 35.21176865617103,
+   "tok_s_system": 281.69414924936825,
+   "breakdown": {
+    "mem_us": 7310.650083682317,
+    "compute_us": 0.0,
+    "comm_alpha_us": 13676.0,
+    "comm_bw_us": 709.9457947469552,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 28399.595878429274,
+    "hbm_gb": 11.956799207054525
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "EP32",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 41.5688746656738,
+   "tok_s_user": 24.056460706302612,
+   "tok_s_system": 769.8067426016836,
+   "breakdown": {
+    "mem_us": 18343.828350951906,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 13676.0,
+    "comm_bw_us": 2839.783178987821,
+    "launch_us": 6603.0,
+    "cpu_us": 100.0,
+    "total_us": 41568.8746656738,
+    "hbm_gb": 27.78009609933206
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 16.28591789692988,
+   "tok_s_user": 61.40274108765547,
+   "tok_s_system": 61.40274108765547,
+   "breakdown": {
+    "mem_us": 8417.325396849616,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6915.0,
+    "comm_bw_us": 28.592500080265257,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 16285.917896929881,
+    "hbm_gb": 17.040974228176353
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 19.535436831630374,
+   "tok_s_user": 51.18902682436422,
+   "tok_s_system": 409.51221459491376,
+   "breakdown": {
+    "mem_us": 11616.21826077549,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6915.0,
+    "comm_bw_us": 79.21857085488755,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 19535.436831630373,
+    "hbm_gb": 22.7682745501802
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 28.806963686370043,
+   "tok_s_user": 34.71382860364239,
+   "tok_s_system": 1110.8425153165565,
+   "breakdown": {
+    "mem_us": 20650.089402950493,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6915.0,
+    "comm_bw_us": 316.8742834195502,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 28806.963686370043,
+    "hbm_gb": 39.106450301771964
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 31.90438735504058,
+   "tok_s_user": 31.34365154458952,
+   "tok_s_system": 31.34365154458952,
+   "breakdown": {
+    "mem_us": 7958.783319360634,
+    "compute_us": 935.9671195071876,
+    "comm_alpha_us": 15516.0,
+    "comm_bw_us": 54.63691617276159,
+    "launch_us": 7339.0,
+    "cpu_us": 100.0,
+    "total_us": 31904.38735504058,
+    "hbm_gb": 17.040974228176353
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 38.38544052021067,
+   "tok_s_user": 26.051544190914804,
+   "tok_s_system": 208.41235352731843,
+   "breakdown": {
+    "mem_us": 8167.555007311069,
+    "compute_us": 7036.0993035175115,
+    "comm_alpha_us": 15516.0,
+    "comm_bw_us": 226.78620938209403,
+    "launch_us": 7339.0,
+    "cpu_us": 100.0,
+    "total_us": 38385.44052021067,
+    "hbm_gb": 22.7682745501802
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 56.20302493742785,
+   "tok_s_user": 17.792636626112625,
+   "tok_s_system": 569.364372035604,
+   "breakdown": {
+    "mem_us": 9373.501894465378,
+    "compute_us": 22967.3782054341,
+    "comm_alpha_us": 15516.0,
+    "comm_bw_us": 907.1448375283761,
+    "launch_us": 7339.0,
+    "cpu_us": 100.0,
+    "total_us": 56203.02493742785,
+    "hbm_gb": 39.106450301771964
+   },
+   "mem": {
+    "worst_weights_gb": 61.252054208,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 192,
+    "max_seqs_256k_global": 4,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 11.07582493057379,
+   "tok_s_user": 90.28672864263072,
+   "tok_s_system": 90.28672864263072,
+   "breakdown": {
+    "mem_us": 3207.232430493525,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6915.0,
+    "comm_bw_us": 28.592500080265257,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 11075.82493057379,
+    "hbm_gb": 6.421155732176349
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 14.238077358263743,
+   "tok_s_user": 70.23420191066757,
+   "tok_s_system": 561.8736152853405,
+   "breakdown": {
+    "mem_us": 6318.858787408856,
+    "compute_us": 0.0,
+    "comm_alpha_us": 6915.0,
+    "comm_bw_us": 79.21857085488755,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 14238.077358263743,
+    "hbm_gb": 11.993728743054525
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 23.283628119207414,
+   "tok_s_user": 42.948633042934915,
+   "tok_s_system": 1374.3562573739173,
+   "breakdown": {
+    "mem_us": 15120.49070005379,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 6915.0,
+    "comm_bw_us": 316.8742834195502,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 23283.628119207413,
+    "hbm_gb": 27.927814243332058
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 26.352350522929154,
+   "tok_s_user": 37.947279091096675,
+   "tok_s_system": 37.947279091096675,
+   "breakdown": {
+    "mem_us": 3342.7136067563947,
+    "compute_us": 0.0,
+    "comm_alpha_us": 15516.0,
+    "comm_bw_us": 54.63691617276159,
+    "launch_us": 7339.0,
+    "cpu_us": 100.0,
+    "total_us": 26352.350522929155,
+    "hbm_gb": 6.421155732176349
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 30.5196036809997,
+   "tok_s_user": 32.76582522015384,
+   "tok_s_system": 262.12660176123075,
+   "breakdown": {
+    "mem_us": 7337.817471617607,
+    "compute_us": 0.0,
+    "comm_alpha_us": 15516.0,
+    "comm_bw_us": 226.78620938209403,
+    "launch_us": 7339.0,
+    "cpu_us": 100.0,
+    "total_us": 30519.603680999702,
+    "hbm_gb": 11.993728743054525
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP8EP4",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 42.320905875955354,
+   "tok_s_user": 23.62898381549414,
+   "tok_s_system": 756.1274820958125,
+   "breakdown": {
+    "mem_us": 18452.49790269291,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 15516.0,
+    "comm_bw_us": 907.1448375283761,
+    "launch_us": 7339.0,
+    "cpu_us": 100.0,
+    "total_us": 42320.90587595535,
+    "hbm_gb": 27.927814243332058
+   },
+   "mem": {
+    "worst_weights_gb": 49.3232705295,
+    "per_seq_8k_mb": 283.29984,
+    "per_seq_256k_gb": 7.304564736,
+    "state_per_seq_mb": 56.807424,
+    "max_seqs_8k_global": 360,
+    "max_seqs_256k_global": 12,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 11.933159083470285,
+   "tok_s_user": 83.80010632600984,
+   "tok_s_system": 83.80010632600984,
+   "breakdown": {
+    "mem_us": 5387.502981342626,
+    "compute_us": 0.0,
+    "comm_alpha_us": 5595.0,
+    "comm_bw_us": 25.65610212765951,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 11933.159083470286,
+    "hbm_gb": 10.98511857895761
+   },
+   "mem": {
+    "worst_weights_gb": 49.823076608,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 184,
+    "max_seqs_256k_global": 6,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 18.531671579035162,
+   "tok_s_user": 53.961672897942876,
+   "tok_s_system": 431.693383183543,
+   "breakdown": {
+    "mem_us": 11806.440682013887,
+    "compute_us": 0.0,
+    "comm_alpha_us": 5595.0,
+    "comm_bw_us": 205.23089702127606,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 18531.671579035163,
+    "hbm_gb": 24.07333255062611
+   },
+   "mem": {
+    "worst_weights_gb": 49.823076608,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 184,
+    "max_seqs_256k_global": 6,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "orig",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 36.97489053241936,
+   "tok_s_user": 27.045380949085057,
+   "tok_s_system": 865.4521903707218,
+   "breakdown": {
+    "mem_us": 29608.92208139797,
+    "compute_us": 25.05254293628806,
+    "comm_alpha_us": 5595.0,
+    "comm_bw_us": 820.9159080851043,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 36974.89053241936,
+    "hbm_gb": 60.39011481196988
+   },
+   "mem": {
+    "worst_weights_gb": 49.823076608,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 184,
+    "max_seqs_256k_global": 6,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 23.57633594577223,
+   "tok_s_user": 42.41541189012972,
+   "tok_s_system": 42.41541189012972,
+   "breakdown": {
+    "mem_us": 4584.863758194016,
+    "compute_us": 1247.9561593429173,
+    "comm_alpha_us": 12282.0,
+    "comm_bw_us": 230.51602823529504,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 23576.33594577223,
+    "hbm_gb": 10.98511857895761
+   },
+   "mem": {
+    "worst_weights_gb": 49.823076608,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 184,
+    "max_seqs_256k_global": 6,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 34.50594357803034,
+   "tok_s_user": 28.980514552185497,
+   "tok_s_system": 231.84411641748397,
+   "breakdown": {
+    "mem_us": 5767.367534124629,
+    "compute_us": 9381.46573802335,
+    "comm_alpha_us": 12282.0,
+    "comm_bw_us": 1844.1103058823603,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 34505.94357803034,
+    "hbm_gb": 24.07333255062611
+   },
+   "mem": {
+    "worst_weights_gb": 49.823076608,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 184,
+    "max_seqs_256k_global": 6,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "orig",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 65.36953087405573,
+   "tok_s_user": 15.29764687965485,
+   "tok_s_system": 489.5247001489552,
+   "breakdown": {
+    "mem_us": 9831.873847011213,
+    "compute_us": 30648.22348351507,
+    "comm_alpha_us": 12282.0,
+    "comm_bw_us": 7376.4335435294415,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 65369.53087405572,
+    "hbm_gb": 60.39011481196988
+   },
+   "mem": {
+    "worst_weights_gb": 49.823076608,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 184,
+    "max_seqs_256k_global": 6,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 9.138943314956286,
+   "tok_s_user": 109.42184074645212,
+   "tok_s_system": 109.42184074645212,
+   "breakdown": {
+    "mem_us": 2593.2872128286267,
+    "compute_us": 0.0,
+    "comm_alpha_us": 5595.0,
+    "comm_bw_us": 25.65610212765951,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 9138.943314956286,
+    "hbm_gb": 5.287712626957607
+   },
+   "mem": {
+    "worst_weights_gb": 45.611277022,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 215,
+    "max_seqs_256k_global": 7,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 15.58975068816235,
+   "tok_s_user": 64.14470763533906,
+   "tok_s_system": 513.1576610827125,
+   "breakdown": {
+    "mem_us": 8858.256655407002,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 5595.0,
+    "comm_bw_us": 205.23089702127606,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 15589.75068816235,
+    "hbm_gb": 18.066471976374835
+   },
+   "mem": {
+    "worst_weights_gb": 45.611277022,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 215,
+    "max_seqs_256k_global": 7,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "w4a16",
+   "scenario": "opt",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 33.73763389888706,
+   "tok_s_user": 29.640489993964515,
+   "tok_s_system": 948.4956798068645,
+   "breakdown": {
+    "mem_us": 26028.91761407066,
+    "compute_us": 367.8003767313034,
+    "comm_alpha_us": 5595.0,
+    "comm_bw_us": 820.9159080851043,
+    "launch_us": 895.0,
+    "cpu_us": 30.0,
+    "total_us": 33737.63389888706,
+    "hbm_gb": 53.57507373509018
+   },
+   "mem": {
+    "worst_weights_gb": 45.611277022,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 215,
+    "max_seqs_256k_global": 7,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 1,
+   "ctx": 8192,
+   "step_ms": 20.336803241063922,
+   "tok_s_user": 49.17193661886876,
+   "tok_s_system": 49.17193661886876,
+   "breakdown": {
+    "mem_us": 2593.2872128286267,
+    "compute_us": 0.0,
+    "comm_alpha_us": 12282.0,
+    "comm_bw_us": 230.51602823529504,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 20336.80324106392,
+    "hbm_gb": 5.287712626957607
+   },
+   "mem": {
+    "worst_weights_gb": 45.611277022,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 215,
+    "max_seqs_256k_global": 7,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 8,
+   "ctx": 8192,
+   "step_ms": 28.221630097023432,
+   "tok_s_user": 35.433814296413416,
+   "tok_s_system": 283.47051437130733,
+   "breakdown": {
+    "mem_us": 8858.256655407002,
+    "compute_us": 6.263135734072015,
+    "comm_alpha_us": 12282.0,
+    "comm_bw_us": 1844.1103058823603,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 28221.630097023433,
+    "hbm_gb": 18.066471976374835
+   },
+   "mem": {
+    "worst_weights_gb": 45.611277022,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 215,
+    "max_seqs_256k_global": 7,
+    "fits": true
+   }
+  },
+  {
+   "strategy": "TP16PP2",
+   "requant": "w4a16",
+   "scenario": "real",
+   "batch": 32,
+   "ctx": 8192,
+   "step_ms": 51.2861515343314,
+   "tok_s_user": 19.498441003719908,
+   "tok_s_system": 623.950112119037,
+   "breakdown": {
+    "mem_us": 26028.91761407066,
+    "compute_us": 367.8003767313034,
+    "comm_alpha_us": 12282.0,
+    "comm_bw_us": 7376.4335435294415,
+    "launch_us": 5131.0,
+    "cpu_us": 100.0,
+    "total_us": 51286.1515343314,
+    "hbm_gb": 53.57507373509018
+   },
+   "mem": {
+    "worst_weights_gb": 45.611277022,
+    "per_seq_8k_mb": 136.267776,
+    "per_seq_256k_gb": 3.939452928,
+    "state_per_seq_mb": 13.584384,
+    "max_seqs_8k_global": 215,
+    "max_seqs_256k_global": 7,
+    "fits": true
+   }
+  }
+ ],
+ "ctx_sweep": [
+  {
+   "strategy": "TP8PP4",
+   "ctx": 2048,
+   "scenario": "opt",
+   "batch": 8,
+   "step_ms": 22.745546546648008,
+   "tok_s_user": 43.96465030854003
+  },
+  {
+   "strategy": "TP8PP4",
+   "ctx": 2048,
+   "scenario": "real",
+   "batch": 8,
+   "step_ms": 38.59206520990424,
+   "tok_s_user": 25.912062351702303
+  },
+  {
+   "strategy": "TP8PP4",
+   "ctx": 8192,
+   "scenario": "opt",
+   "batch": 8,
+   "step_ms": 23.401798759537,
+   "tok_s_user": 42.73175794200294
+  },
+  {
+   "strategy": "TP8PP4",
+   "ctx": 8192,
+   "scenario": "real",
+   "batch": 8,
+   "step_ms": 39.24831742279324,
+   "tok_s_user": 25.47879923686246
+  },
+  {
+   "strategy": "TP8PP4",
+   "ctx": 32768,
+   "scenario": "opt",
+   "batch": 8,
+   "step_ms": 26.07211420979891,
+   "tok_s_user": 38.35515570210878
+  },
+  {
+   "strategy": "TP8PP4",
+   "ctx": 32768,
+   "scenario": "real",
+   "batch": 8,
+   "step_ms": 41.918632873055216,
+   "tok_s_user": 23.855739833604822
+  },
+  {
+   "strategy": "TP8PP4",
+   "ctx": 131072,
+   "scenario": "opt",
+   "batch": 8,
+   "step_ms": 36.73288077165972,
+   "tok_s_user": 27.223565889542847
+  },
+  {
+   "strategy": "TP8PP4",
+   "ctx": 131072,
+   "scenario": "real",
+   "batch": 8,
+   "step_ms": 52.57939943491609,
+   "tok_s_user": 19.018855497537995
+  }
+ ]
+}
