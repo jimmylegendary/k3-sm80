@@ -1,0 +1,91 @@
+{
+  "counts": {
+    "FAIL": 0,
+    "INCOMPLETE": 0,
+    "MISSING": 7,
+    "PASS": 0
+  },
+  "generated_utc": "2026-07-28T08:38:06+00:00",
+  "invalid": {},
+  "kernels": [
+    {
+      "dry_run": null,
+      "gates": {
+        "NUMERIC": "-",
+        "PERF": "-",
+        "SANITIZER": "-",
+        "SHAPES": "-"
+      },
+      "id": "k01_kda_chunk",
+      "overall": "MISSING"
+    },
+    {
+      "dry_run": null,
+      "gates": {
+        "NUMERIC": "-",
+        "PERF": "-",
+        "SANITIZER": "-",
+        "SHAPES": "-"
+      },
+      "id": "k02_kda_recurrent",
+      "overall": "MISSING"
+    },
+    {
+      "dry_run": null,
+      "gates": {
+        "NUMERIC": "-",
+        "PERF": "-",
+        "SANITIZER": "-",
+        "SHAPES": "-"
+      },
+      "id": "k03_causal_conv1d",
+      "overall": "MISSING"
+    },
+    {
+      "dry_run": null,
+      "gates": {
+        "NUMERIC": "-",
+        "PERF": "-",
+        "SANITIZER": "-",
+        "SHAPES": "-"
+      },
+      "id": "k04_mla_decode",
+      "overall": "MISSING"
+    },
+    {
+      "dry_run": null,
+      "gates": {
+        "NUMERIC": "-",
+        "PERF": "-",
+        "SANITIZER": "-",
+        "SHAPES": "-"
+      },
+      "id": "k05_marlin_moe_w4a16",
+      "overall": "MISSING"
+    },
+    {
+      "dry_run": null,
+      "gates": {
+        "NUMERIC": "-",
+        "PERF": "-",
+        "SANITIZER": "-",
+        "SHAPES": "-"
+      },
+      "id": "k06_dequant_bench",
+      "overall": "MISSING"
+    },
+    {
+      "dry_run": null,
+      "gates": {
+        "NUMERIC": "-",
+        "PERF": "-",
+        "SANITIZER": "-",
+        "SHAPES": "-"
+      },
+      "id": "k07_situ_act",
+      "overall": "MISSING"
+    }
+  ],
+  "report_dir": "/home/jimmy/repos/k3-sm80/kernel-kit/kernel-report",
+  "s2_complete": false
+}

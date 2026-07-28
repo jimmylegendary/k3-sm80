@@ -1,0 +1,68 @@
+{
+  "env": {
+    "compute_sanitizer": null,
+    "cuda_available": false,
+    "host": "jimmy-SER",
+    "numpy": "2.4.2",
+    "nvidia_smi": null,
+    "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "python": "3.14.3",
+    "repo_commit": "4645dca",
+    "torch": null,
+    "torch_cuda_arch_list": null,
+    "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
+    "triton": null,
+    "vllm": null
+  },
+  "evidence": {},
+  "gates": {
+    "NUMERIC": {
+      "evidence": {},
+      "reason": "selftest — 실비교 없음",
+      "status": "SKIP"
+    },
+    "PERF": {
+      "evidence": {},
+      "reason": "selftest — 측정 없음",
+      "status": "SKIP"
+    },
+    "SANITIZER": {
+      "evidence": {},
+      "reason": "compute-sanitizer memcheck clean (0 errors)",
+      "status": "PASS"
+    },
+    "SHAPES": {
+      "evidence": {
+        "covered": [
+          "b1_ctx128k",
+          "b1_ctx8k",
+          "b32_ctx128k",
+          "b32_ctx8k",
+          "b8_ctx8k"
+        ],
+        "extra": [],
+        "missing": [],
+        "required": [
+          "b1_ctx128k",
+          "b1_ctx8k",
+          "b32_ctx128k",
+          "b32_ctx8k",
+          "b8_ctx8k"
+        ]
+      },
+      "reason": "요구 5케이스 전부 커버",
+      "status": "PASS"
+    }
+  },
+  "id": "k02_kda_recurrent",
+  "meta": {
+    "created_utc": "2026-07-28T08:38:06+00:00",
+    "dry_run": true,
+    "duration_s": 0.0,
+    "pins": {
+      "selftest": true
+    }
+  },
+  "overall": "INCOMPLETE",
+  "schema_version": "s2-kernel-report/v1"
+}
