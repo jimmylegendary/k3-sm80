@@ -295,7 +295,10 @@ def _selftest(report_dir: str | None) -> int:
         f.write(render_md(d))
     with open(jpath, encoding="utf-8") as f:
         ok &= not validate_report(json.load(f))
-    agg = aggregate(tmp)   # 빈 디렉터리 집계 → 전부 MISSING 이어야 함
+    # 집계 로직 검증은 **항상 빈 임시 디렉터리**에서 수행한다 — report_dir(라이브)로 하면
+    # 커널 리포트가 하나라도 쌓인 뒤의 모든 재실행에서 selftest 가 영구 FAIL(run_all exit 3).
+    empty = tempfile.mkdtemp(prefix="s2-report-selftest-empty-")
+    agg = aggregate(empty)   # 빈 디렉터리 집계 → 전부 MISSING 이어야 함
     ok &= agg["counts"]["MISSING"] == len(shapes.KERNEL_IDS)
     print(json.dumps({"report_selftest": "PASS" if ok else "FAIL",
                       "sample": jpath, "validate_errors": errs}, ensure_ascii=False))

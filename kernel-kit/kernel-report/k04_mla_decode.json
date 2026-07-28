@@ -1,0 +1,104 @@
+{
+  "env": {
+    "compute_sanitizer": null,
+    "cuda_available": false,
+    "host": "jimmy-SER",
+    "numpy": "2.4.2",
+    "nvidia_smi": null,
+    "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "python": "3.14.3",
+    "repo_commit": "de8dd04",
+    "torch": null,
+    "torch_cuda_arch_list": null,
+    "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
+    "triton": null,
+    "vllm": null
+  },
+  "evidence": {
+    "dry_run": {
+      "algorithm_check": "naive fp64 softmax vs split-KV 2-stage(LSE 병합) 재현 — triton_decode_attention.py stage1/stage2 수식 대조",
+      "lse_merge_max_abs_err": 8.881784197001252e-16,
+      "mode": "cpu-dry-run(순수 python, torch/GPU 불필요)",
+      "negative_control_failed_as_expected": true,
+      "scaled_cases": [
+        {
+          "b": 1,
+          "case": "b1_ctx8k",
+          "ctx_scaled": 96,
+          "passed": true,
+          "rmse_rel": 0.001441289604264385,
+          "seed": 265864206
+        },
+        {
+          "b": 2,
+          "case": "b8_ctx8k",
+          "ctx_scaled": 96,
+          "passed": true,
+          "rmse_rel": 0.0015260344212167085,
+          "seed": 440435165
+        },
+        {
+          "b": 2,
+          "case": "b32_ctx8k",
+          "ctx_scaled": 96,
+          "passed": true,
+          "rmse_rel": 0.0016106878240603453,
+          "seed": 1303591021
+        },
+        {
+          "b": 1,
+          "case": "b1_ctx128k",
+          "ctx_scaled": 160,
+          "passed": true,
+          "rmse_rel": 0.001658090809162805,
+          "seed": 281667742
+        },
+        {
+          "b": 2,
+          "case": "b32_ctx128k",
+          "ctx_scaled": 160,
+          "passed": true,
+          "rmse_rel": 0.0017803758678550312,
+          "seed": 1779608742
+        }
+      ],
+      "selfcheck": "PASS"
+    },
+    "fp8_kv_arm": "fp8 KV arm 미실행 — SM80에서 TRITON_MLA는 fp8 KV를 __init__에서 즉시 거부 (vllm@d223c900 triton_mla.py L187-198: 'native FP8 (fp8e4nv) requires SM89+'). A100 경로는 bf16 KV 단일 arm이 유일하며 K3 기본 kv-cache-dtype=auto(bf16). fp8 대조 바(upstream test atol=5e-1)는 SM89+ 전용 — S2 범위 밖."
+  },
+  "gates": {
+    "NUMERIC": {
+      "evidence": {},
+      "reason": "cpu-dry-run: 실커널 미실행 — 참조·판정 파이프 자체점검만 수행(evidence.dry_run)",
+      "status": "SKIP"
+    },
+    "PERF": {
+      "evidence": {},
+      "reason": "cpu-dry-run: 측정 없음",
+      "status": "SKIP"
+    },
+    "SANITIZER": {
+      "evidence": {},
+      "reason": "cpu-dry-run: GPU 없음",
+      "status": "SKIP"
+    },
+    "SHAPES": {
+      "evidence": {},
+      "reason": "cpu-dry-run: 축소 shape 실행 — K3 실측 shape 판정은 GPU 모드 전용",
+      "status": "SKIP"
+    }
+  },
+  "id": "k04_mla_decode",
+  "meta": {
+    "created_utc": "2026-07-28T09:01:18+00:00",
+    "dry_run": true,
+    "duration_s": 0.034,
+    "pins": {
+      "hf_kimi_k3": "9f62e4e9",
+      "vllm_kimi_k3": "0498dc7e",
+      "vllm_main": "d223c900"
+    }
+  },
+  "overall": "INCOMPLETE",
+  "schema_version": "s2-kernel-report/v1"
+}

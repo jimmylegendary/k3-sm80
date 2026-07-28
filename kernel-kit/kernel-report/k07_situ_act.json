@@ -1,0 +1,99 @@
+{
+  "env": {
+    "compute_sanitizer": null,
+    "cuda_available": false,
+    "host": "jimmy-SER",
+    "numpy": "2.4.2",
+    "nvidia_smi": null,
+    "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "python": "3.14.3",
+    "repo_commit": "de8dd04",
+    "torch": null,
+    "torch_cuda_arch_list": null,
+    "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
+    "triton": null,
+    "vllm": null
+  },
+  "evidence": {
+    "dry_run": {
+      "check": "fp64 수식 참조 vs bf16 반올림 모사 출력 — 실제 TOL[k07] 정책으로 판정",
+      "mode": "cpu-dry-run(순수 python, torch/GPU 불필요)",
+      "negative_control_failed_as_expected": true,
+      "scaled_cases": [
+        {
+          "case": "routed_inter3072_m32",
+          "m_scaled": 8,
+          "mismatch_frac": 0.0,
+          "n_scaled": 16,
+          "passed": true,
+          "rmse_rel": 0.0013348742600230398,
+          "seed": 1306512099
+        },
+        {
+          "case": "shared_inter6144_m32",
+          "m_scaled": 8,
+          "mismatch_frac": 0.0,
+          "n_scaled": 16,
+          "passed": true,
+          "rmse_rel": 0.001411513827955043,
+          "seed": 133874726
+        },
+        {
+          "case": "dense_inter33792_m32",
+          "m_scaled": 8,
+          "mismatch_frac": 0.0,
+          "n_scaled": 16,
+          "passed": true,
+          "rmse_rel": 0.0015936651479747327,
+          "seed": 1637643922
+        },
+        {
+          "case": "shared_inter6144_m8192",
+          "m_scaled": 8,
+          "mismatch_frac": 0.0,
+          "n_scaled": 16,
+          "passed": true,
+          "rmse_rel": 0.0011706419205755889,
+          "seed": 219837930
+        }
+      ],
+      "selfcheck": "PASS"
+    },
+    "formula": "out = [β·tanh(gate/β)·sigmoid(gate)] · [lβ·tanh(up/lβ)], gate=x[...,:d], up=x[...,d:], β=4.0, lβ=25.0 — HF modeling_kimi_linear.py@9f62e4e9 L64-91 = vLLM activation.py@0498dc7e SituAndMul.forward_native (동일 수식 원문 대조)"
+  },
+  "gates": {
+    "NUMERIC": {
+      "evidence": {},
+      "reason": "cpu-dry-run: 실커널 미실행 — 수식·판정 파이프 자체점검만 수행(evidence.dry_run)",
+      "status": "SKIP"
+    },
+    "PERF": {
+      "evidence": {},
+      "reason": "cpu-dry-run: 측정 없음",
+      "status": "SKIP"
+    },
+    "SANITIZER": {
+      "evidence": {},
+      "reason": "cpu-dry-run: GPU 없음",
+      "status": "SKIP"
+    },
+    "SHAPES": {
+      "evidence": {},
+      "reason": "cpu-dry-run: 축소 shape 실행 — K3 실측 shape 판정은 GPU 모드 전용",
+      "status": "SKIP"
+    }
+  },
+  "id": "k07_situ_act",
+  "meta": {
+    "created_utc": "2026-07-28T09:01:18+00:00",
+    "dry_run": true,
+    "duration_s": 0.003,
+    "pins": {
+      "hf_kimi_k3": "9f62e4e9",
+      "vllm_kimi_k3": "0498dc7e",
+      "vllm_main": "d223c900"
+    }
+  },
+  "overall": "INCOMPLETE",
+  "schema_version": "s2-kernel-report/v1"
+}

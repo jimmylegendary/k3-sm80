@@ -1,11 +1,11 @@
 {
   "counts": {
     "FAIL": 0,
-    "INCOMPLETE": 0,
-    "MISSING": 7,
+    "INCOMPLETE": 4,
+    "MISSING": 3,
     "PASS": 0
   },
-  "generated_utc": "2026-07-28T08:38:06+00:00",
+  "generated_utc": "2026-07-28T09:01:26+00:00",
   "invalid": {},
   "kernels": [
     {
@@ -42,48 +42,48 @@
       "overall": "MISSING"
     },
     {
-      "dry_run": null,
+      "dry_run": true,
       "gates": {
-        "NUMERIC": "-",
-        "PERF": "-",
-        "SANITIZER": "-",
-        "SHAPES": "-"
+        "NUMERIC": "SKIP",
+        "PERF": "SKIP",
+        "SANITIZER": "SKIP",
+        "SHAPES": "SKIP"
       },
       "id": "k04_mla_decode",
-      "overall": "MISSING"
+      "overall": "INCOMPLETE"
     },
     {
-      "dry_run": null,
+      "dry_run": true,
       "gates": {
-        "NUMERIC": "-",
-        "PERF": "-",
-        "SANITIZER": "-",
-        "SHAPES": "-"
+        "NUMERIC": "SKIP",
+        "PERF": "SKIP",
+        "SANITIZER": "SKIP",
+        "SHAPES": "SKIP"
       },
       "id": "k05_marlin_moe_w4a16",
-      "overall": "MISSING"
+      "overall": "INCOMPLETE"
     },
     {
-      "dry_run": null,
+      "dry_run": true,
       "gates": {
-        "NUMERIC": "-",
-        "PERF": "-",
-        "SANITIZER": "-",
-        "SHAPES": "-"
+        "NUMERIC": "SKIP",
+        "PERF": "SKIP",
+        "SANITIZER": "SKIP",
+        "SHAPES": "SKIP"
       },
       "id": "k06_dequant_bench",
-      "overall": "MISSING"
+      "overall": "INCOMPLETE"
     },
     {
-      "dry_run": null,
+      "dry_run": true,
       "gates": {
-        "NUMERIC": "-",
-        "PERF": "-",
-        "SANITIZER": "-",
-        "SHAPES": "-"
+        "NUMERIC": "SKIP",
+        "PERF": "SKIP",
+        "SANITIZER": "SKIP",
+        "SHAPES": "SKIP"
       },
       "id": "k07_situ_act",
-      "overall": "MISSING"
+      "overall": "INCOMPLETE"
     }
   ],
   "report_dir": "/home/jimmy/repos/k3-sm80/kernel-kit/kernel-report",

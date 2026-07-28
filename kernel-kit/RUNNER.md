@@ -61,10 +61,10 @@ bash run_all.sh --cpu-dry-run                     # (호스트용) 참조·판�
 | k01 KDA chunk | 5–10분 | +5–15분 | Triton autotune 최초 1회가 지배(ctx 128k 케이스). 재실행은 캐시로 단축 |
 | k02 KDA recurrent | 2–4분 | +3–8분 | state 6.29MB/seq 스트림 — 빠름 |
 | k03 causal_conv1d | 1–2분 | +2–5분 | |
-| k04 MLA decode | 3–6분 | +5–10분 | ctx 128k KV(b32 기준 ~4.8GB) 할당 포함 |
+| k04 MLA decode | 3–6분 | +5–10분 | ctx 128k KV(b32 기준 ~4.8GB) 할당 포함. bf16 KV 단일 arm(SM80은 fp8 KV 불가 — 리포트 evidence.fp8_kv_arm). PERF는 roofline≥30µs 4케이스 판정(b1_ctx8k는 launch 지배 → evidence만) |
 | k05 Marlin MoE | 20–50분 | +30–120분 | **crash 예상 경로**. 케이스=독립 프로세스(사다리 E 8→64→256→896, K 512→3584→7168) — 한 crash가 전체를 안 죽임. 시간은 E=896 가중치 생성·양자화가 지배(케이스당 수 분). sanitizer는 가중치 빌드까지 계측되어 매우 느림 — hang ≠ 실패, 기다릴 것 |
 | k06 dequant bench | 3–6분 | +1–3분 (소형 arm) | 측정 산출형 — CV≤10%면 PASS. `calibration-k06-dequant.json`(dequant_ops/param)이 phase0 재보정 입력 |
-| k07 SiTU 참조 | 1분 | +1–2분 | PERF는 기본 SKIP(성능 후순위) |
+| k07 SiTU 참조 | 1분 | +1–2분 | arm=native(언퓨즈드)+fused(`_C.situ_and_mul`, venv-k3 존재 시). PERF 기본 판정=fused arm·m8192 케이스만(floor 0.30); `--no-perf` 시 정책상 SKIP(성능 후순위) |
 
 전체 첫 실행 대략 30–60분(autotune 포함), 재실행 ~15분.
 sanitizer arm은 각 하네스가 축소 shape로 자체 실행한다(전 shape sanitizer는 비용상 비표준).
