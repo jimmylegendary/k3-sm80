@@ -1,0 +1,116 @@
+{
+  "env": {
+    "compute_sanitizer": null,
+    "cuda_available": false,
+    "host": "jimmy-SER",
+    "numpy": "2.4.2",
+    "nvidia_smi": null,
+    "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "python": "3.14.3",
+    "repo_commit": "745ceae",
+    "torch": null,
+    "torch_cuda_arch_list": null,
+    "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
+    "triton": null,
+    "vllm": null
+  },
+  "evidence": {},
+  "gates": {
+    "NUMERIC": {
+      "evidence": {
+        "selftest": {
+          "checks": 14,
+          "failed": [],
+          "names": [
+            "kda_split_carry_o/lb=-5.0",
+            "kda_split_carry_S/lb=-5.0",
+            "kda_determinism/lb=-5.0",
+            "kda_gate_range/lb=-5.0",
+            "kda_split_carry_o/lb=None",
+            "kda_split_carry_S/lb=None",
+            "kda_determinism/lb=None",
+            "kda_gate_range/lb=None",
+            "gate_softplus_linear",
+            "l2norm_unit",
+            "conv_split_carry_o",
+            "conv_split_carry_S",
+            "conv_fn_vs_update_o",
+            "conv_fn_vs_update_S"
+          ]
+        },
+        "wiring": {
+          "fail_case": true,
+          "pass_case": true
+        }
+      },
+      "reason": "cpu-dry-run: 실커널 미실행 — 순수 python 참조 자기검증 14건(분할=이월 동치 포함) + 판정 배선 양방향 green",
+      "status": "SKIP"
+    },
+    "PERF": {
+      "evidence": {
+        "basis": "state 6.29MB/seq fp32 r+w 스트림 지배(memory-bound) — 50% 미만이면 launch/인덱싱 병목 의심. Phase 0 real 마진(0.536)과 동수준.",
+        "dry_note": "목표 산출 경로(verdict→twin→roofline) 검증됨 — 판정 아님",
+        "dry_roofline": {
+          "bound": "mem",
+          "roofline_us": 199.40428837665522,
+          "t_alu_us": 0.0,
+          "t_mem_us": 199.40428837665522,
+          "t_tc_us": 0.6454761465066173
+        },
+        "policy": {
+          "eff_floor": 0.5
+        },
+        "verdict": {
+          "gate": "PASS",
+          "path": "/home/jimmy/repos/k3-sm80/phase0/verdict.json",
+          "pins": {
+            "hat_schema": "98ea3f7",
+            "hatir": "3a60d38",
+            "hf": "moonshotai/Kimi-K3@9f62e4e9",
+            "vllm_kimi_k3": "0498dc7e",
+            "vllm_main": "d223c900"
+          },
+          "real_opt_margin": 0.5362824336070408
+        }
+      },
+      "reason": "측정값 없음 (GPU 미실행)",
+      "status": "SKIP"
+    },
+    "SANITIZER": {
+      "evidence": {},
+      "reason": "cpu-dry-run: GPU 미실행",
+      "status": "SKIP"
+    },
+    "SHAPES": {
+      "evidence": {
+        "extra": [
+          "prefill_to_decode_carry",
+          "null_index_semantics"
+        ],
+        "n_steps": 4,
+        "required": [
+          "b1_ctx128k",
+          "b1_ctx8k",
+          "b32_ctx128k",
+          "b32_ctx8k",
+          "b8_ctx8k"
+        ]
+      },
+      "reason": "cpu-dry-run: 커널 미실행 — 요구 케이스 정의만 확인",
+      "status": "SKIP"
+    }
+  },
+  "id": "k02_kda_recurrent",
+  "meta": {
+    "created_utc": "2026-07-28T09:16:48+00:00",
+    "dry_run": true,
+    "duration_s": 0.003,
+    "pins": {
+      "hf": "moonshotai/Kimi-K3@9f62e4e9",
+      "vllm_kimi_k3": "0498dc7e",
+      "vllm_main": "d223c900"
+    }
+  },
+  "overall": "INCOMPLETE",
+  "schema_version": "s2-kernel-report/v1"
+}
