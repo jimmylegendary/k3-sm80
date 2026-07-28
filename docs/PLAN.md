@@ -58,9 +58,20 @@ FlashKDA(CUTLASS sm90a) 포팅은 **하지 않는다** — Triton 폴백이 공�
 - 완료 판정: ① 레이어 parity — vLLM 레이어 forward vs kernel-kit 참조 logits tol 내
   ② dummy-load K3(또는 소형 변형) E2E 생성 정상 ③ 커널 단독 perf 대비 절벽 없음(≥80%).
 
-### S5 — 전량 W4A16 재양자화 (⏸ Jimmy 결정 대기)
-- 목적: bf16 잔여 53.3% 제거 → 1.40× (136.96 → 56.36 GB/tok).
-- 완료 판정: 재양자화 체크포인트가 S4 스택에서 로드·생성 + 품질 대조(방법은 결정 시 정의).
+### S5 — 양자화 lane (⏸ Jimmy 결정 대기; 2026-07-28 정확도 논의로 재정의)
+정확도 사실관계: MXFP4→bf16 dequant는 **exact**(e2m1 값·E8M0 스케일 모두 bf16 정확 표현)
+→ 원본 MXFP4 직행이 무손실. MXFP4→INT4 재양자화는 실손실(비균등→균등 격자, QAT 적응 가중치).
+**expert 재양자화는 속도 이득 0** (MXFP4=INT4=4bit, bytes 동일) — 1.40×의 원천은 전적으로
+bf16 잔여 53.3%(KDA 30.6B + shared 12.2B + MLA·latent proj·lm_head)의 양자화.
+- **3a (기본)**: mixed — expert 원본 MXFP4 유지(무손실, Marlin FP4 MoE lane 필요=probe E/S3),
+  bf16 잔여만 W4A16. ~56GB/tok, 1.40×. 단 잔여 양자화도 신규 PTQ 손실(어텐션 민감) →
+  품질 게이트 필수.
+- **3b (보험)**: 전량 W4A16 — FP4 MoE 수정 불가 판명 시에만. expert 손실 감수.
+- **3-none**: 재양자화 없이 46.8 tok/s로 충분하면 skip.
+- W4A16 lane을 유지하는 이유: ① INT4/FP4 Marlin MoE는 같은 커널 계열 — c_tmp OOB 수정이
+  양쪽에 적용될 가능성 ② INT4는 재현 체크포인트가 있어 crash 디버깅 진입로 ③ 3b 보험.
+- 완료 판정: 선택 lane 체크포인트가 S4 스택에서 로드·생성 + 원본 대비 품질 대조 통과
+  (방법은 lane 확정 시 정의).
 
 ### S6 — 32장 스케일업
 - 목적: TP8PP4 배치 + 튜닝으로 "쓸 만한 속도" 실증.
