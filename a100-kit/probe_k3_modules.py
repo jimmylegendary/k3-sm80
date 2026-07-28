@@ -112,7 +112,7 @@ def stage_s1():
         )
     except Exception as e:
         fail_exit(11, "S1", "FAIL_IMPORT_KDA_FUNCS", error=repr(e),
-                  hint="브랜치가 함수를 이동/개명했을 수 있음 — 커밋 재고정 필요(DECISION-TREE §3)")
+                  hint="브랜치가 함수를 이동/개명했을 수 있음 — 브랜치 드리프트 절차(DECISION-TREE §5)")
 
     ok = True
     # K3 실제 파라미터: head_dim=128, bf16, gate_lower_bound=-5.0 (recon/k3-config.md)
@@ -138,7 +138,9 @@ def stage_s1():
     except RuntimeError:
         forced_raises = True
     except Exception as e:
-        emit("S1", "WARN_FORCED_FLASHKDA_WRONG_EXC", error=repr(e))
+        forced_raises = True  # 예외는 났다(차단은 작동) — 타입 드리프트만 WARN
+        emit("S1", "WARN_FORCED_FLASHKDA_WRONG_EXC", error=repr(e),
+             note="RuntimeError 아님 — 게이트 코드 드리프트 여부 확인")
     if not forced_raises:
         emit("S1", "WARN_FORCED_FLASHKDA_NO_RAISE",
              note="SM80에서 flashkda 강제가 조용히 통과 — 게이트 완화 여부 확인")
@@ -322,6 +324,10 @@ def main():
     args = p.parse_args()
 
     stages = args.stages.split()
+    valid = {"S0", "S1", "S2", "S3"}
+    if not stages or not set(stages) <= valid:
+        p.error(f"--stages 값은 {sorted(valid)}의 부분집합이어야 함 (받은 값: {stages!r})"
+                " — 오타 시 아무 것도 실행 않고 exit 0 되는 false-green 방지")
     if "S0" in stages:
         stage_s0()
     else:

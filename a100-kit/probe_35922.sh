@@ -270,7 +270,8 @@ for arm in $PROBE_ARMS; do
         C) run_arm C "$MODEL_W4A16" "$REV_W4A16" triton "$TIMEOUT_ARM" 0 ;;
         D) run_arm D "$MODEL_MXFP4" "$REV_MXFP4" auto   "$TIMEOUT_ARM" 0 ;;
         E) run_arm E "$MODEL_MXFP4" "$REV_MXFP4" marlin "$TIMEOUT_ARM" 0 ;;
-        *) log "알 수 없는 arm: $arm (무시)" ;;
+        *) log "알 수 없는 arm: $arm"
+           summary "PROBE35922|arm=$arm|verdict=UNKNOWN_ARM|note=오타 의심 — 유효 arm은 A B C D E" ;;
     esac
 done
 

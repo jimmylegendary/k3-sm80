@@ -25,8 +25,9 @@
 #   T5  chunk_kda_with_fused_gate vs 독립 naive 게이트 수식             [k3]
 #       gate = lower_bound * sigmoid(exp(A_log) * (raw_g + dt_bias)), lower_bound=-5.0
 #       beta = sigmoid(raw_beta)   ← K3 브랜치 커널( _kda_gate_beta_fwd_kernel )에서 추출한 수식
-#   T6  fused_recurrent_kda(fuse_gate=True) vs chunk_kda_with_fused_gate 교차일관성
-#       (o: naive에도 대조 · state: 커널 간 직접 비교 = 서빙의 prefill→decode 핸드오프 등가) [k3]
+#   T6  chunk prefill(seq당 L-1) → fused_recurrent_kda decode(seq당 1토큰) 핸드오프
+#       vs naive/chunk 전체-T — k3 decode 커널은 T==N(시퀀스당 1토큰) 전용이라
+#       서빙과 동일한 prefill→decode 구조로 검증 [k3]
 #
 # 판정: RMSE 비율(rel_err = rmse(ref-out)/rmse(ref)) — vLLM 업스트림 테스트와 동일 척도.
 #   기본 임계 0.005 (T5/T6 게이트 경유는 0.008). PROBE_KDA_THR_* env로 조절.
@@ -43,8 +44,12 @@ import sys
 import time
 import traceback
 
-import torch
-import torch.nn.functional as F
+try:
+    import torch
+    import torch.nn.functional as F
+except Exception as _e:  # 계약: 3=크래시/임포트 실패 (기본 traceback exit 1 방지)
+    print(f"PROBE_KDA|impl=-|test=env|verdict=FAIL_TORCH_IMPORT|error={_e!r}")
+    sys.exit(3)
 
 LOWER_BOUND = -5.0  # K3 config linear_attn_config.gate_lower_bound (recon/k3-config.md)
 D_K3 = 128          # K3 head_dim
@@ -297,13 +302,24 @@ def t5_fused_gate_vs_naive(mod, cu, H, dtype):
 
 
 def t6_recurrent_vs_chunk_k3(mod, cu, H, dtype):
-    """k3 사본: fused_recurrent_kda(raw 입력, in-kernel gate+sigmoid+l2norm)
-    vs chunk_kda_with_fused_gate 동일 입력 — decode 커널의 교차일관성 + state 핸드오프."""
+    """k3 사본 decode 커널의 교차일관성 + state 핸드오프.
+
+    주의: k3 사본 fused_recurrent_kda_fwd는 1-D ssm_state_indices에서 `assert T == N`
+    (pin 0498dc7 fused_recurrent.py L361 부근) — **시퀀스당 1토큰 decode 전용**이다
+    (main 사본의 범용 varlen recurrent와 다름; 킷 검증 2026-07-28에서 확인).
+    따라서 서빙과 동일한 구조로 검증한다:
+      chunk_kda_with_fused_gate(각 seq 앞 L-1 토큰) → state 핸드오프
+      → fused_recurrent_kda(각 seq 마지막 1토큰, T==N) 를
+      naive 전체-T(마지막 토큰 위치) 및 chunk 전체-T(o 마지막 토큰·final state)와 대조."""
     inp = make_inputs(cu, H, D_K3, dtype, seed=46)
+    N = inp["N"]
+    lens = [inp["cu"][i + 1] - inp["cu"][i] for i in range(N)]
+    assert all(l >= 2 for l in lens), f"T6는 seq당 >=2 토큰 필요: {lens}"
     g_ref = ref_gate(inp["raw_g"], inp["dt_bias"], inp["A_log"])
     beta_ref = inp["raw_beta"].float().sigmoid()
     ref_o, _ = naive_over_varlen(inp, g_override=g_ref, beta_override=beta_ref)
 
+    # (a) 전체 T chunk — o 비교 기준 + 전체-T final state 기준
     chk_o, chk_ht = mod.chunk_kda_with_fused_gate(
         q=inp["q"].clone(), k=inp["k"].clone(), v=inp["v"].clone(),
         raw_g=inp["raw_g"].clone(), raw_beta=inp["raw_beta"].clone(),
@@ -312,21 +328,47 @@ def t6_recurrent_vs_chunk_k3(mod, cu, H, dtype):
         output_final_state=True, cu_seqlens=inp["cu_t"],
         use_qk_l2norm_in_kernel=True)
 
-    pool = inp["h0"].transpose(-1, -2).contiguous().clone()
-    idx = torch.arange(inp["N"], dtype=torch.long, device="cuda")
-    rec_o, _ = mod.fused_recurrent_kda(
-        q=inp["q"].clone(), k=inp["k"].clone(), v=inp["v"].clone(),
-        raw_g=inp["raw_g"].clone(), raw_beta=inp["raw_beta"].clone(),
-        A_log=inp["A_log"], dt_bias=inp["dt_bias"], lower_bound=LOWER_BOUND,
-        initial_state=pool, cu_seqlens=inp["cu_t"], ssm_state_indices=idx)
+    # (b) prefill: 각 seq 마지막 1토큰 제외한 L-1 토큰
+    pre_pos, cu_pre = [], [0]
+    for i in range(N):
+        pre_pos.extend(range(inp["cu"][i], inp["cu"][i + 1] - 1))
+        cu_pre.append(cu_pre[-1] + lens[i] - 1)
+    dec_pos = [inp["cu"][i + 1] - 1 for i in range(N)]
+    idx_pre = torch.tensor(pre_pos, dtype=torch.long, device="cuda")
+    idx_dec = torch.tensor(dec_pos, dtype=torch.long, device="cuda")
+    cu_pre_t = torch.tensor(cu_pre, dtype=torch.int32, device="cuda")
 
-    ro_x = rel_rmse(chk_o, rec_o)          # 커널 간
-    ro_n = rel_rmse(ref_o, rec_o)          # naive 대비
-    rh_x = rel_rmse(chk_ht, pool)          # state 핸드오프 등가 (동일 레이아웃 전제)
+    def sel(x, idx):
+        return x.index_select(1, idx).contiguous()
+
+    _, ht_pre = mod.chunk_kda_with_fused_gate(
+        q=sel(inp["q"], idx_pre), k=sel(inp["k"], idx_pre), v=sel(inp["v"], idx_pre),
+        raw_g=sel(inp["raw_g"], idx_pre), raw_beta=sel(inp["raw_beta"], idx_pre),
+        A_log=inp["A_log"], g_bias=inp["dt_bias"], lower_bound=LOWER_BOUND,
+        initial_state=inp["h0"].transpose(-1, -2).contiguous(),
+        output_final_state=True, cu_seqlens=cu_pre_t,
+        use_qk_l2norm_in_kernel=True)
+
+    # (c) decode: seq당 1토큰 (T==N 충족), state pool은 prefill 산출 그대로 (핸드오프)
+    pool = ht_pre.contiguous().clone()
+    cu_dec = torch.arange(N + 1, dtype=torch.int32, device="cuda")
+    sidx = torch.arange(N, dtype=torch.long, device="cuda")
+    rec_o, _ = mod.fused_recurrent_kda(
+        q=sel(inp["q"], idx_dec), k=sel(inp["k"], idx_dec), v=sel(inp["v"], idx_dec),
+        raw_g=sel(inp["raw_g"], idx_dec), raw_beta=sel(inp["raw_beta"], idx_dec),
+        A_log=inp["A_log"], dt_bias=inp["dt_bias"], lower_bound=LOWER_BOUND,
+        initial_state=pool, cu_seqlens=cu_dec, ssm_state_indices=sidx)
+
+    ref_dec = ref_o.index_select(1, idx_dec)
+    chk_dec = chk_o.index_select(1, idx_dec)
+    ro_x = rel_rmse(chk_dec, rec_o)        # 커널 간 (decode 토큰)
+    ro_n = rel_rmse(ref_dec, rec_o)        # naive 대비 (decode 토큰)
+    rh_x = rel_rmse(chk_ht, pool)          # 전체-T state 등가 (동일 (V,K) 레이아웃)
     v = "PASS" if (ro_x < THR_GATE and ro_n < THR_GATE and rh_x < THR_GATE) else "FAIL"
     emit("k3", "T6_recurrent_vs_chunk", v, cross_o_rmse=f"{ro_x:.6f}",
          naive_o_rmse=f"{ro_n:.6f}", cross_state_rmse=f"{rh_x:.6f}",
-         thr=THR_GATE, dtype=str(dtype).split(".")[-1])
+         thr=THR_GATE, dtype=str(dtype).split(".")[-1],
+         note="prefill(L-1)+decode(1tok/seq,T==N)")
     return v == "PASS"
 
 
@@ -413,9 +455,13 @@ def main():
         emit("-", "env", "FAIL_NO_CUDA")
         sys.exit(3)
     cap = torch.cuda.get_device_capability()
+    try:
+        triton_ver = __import__("triton").__version__
+    except Exception:
+        triton_ver = "?"  # triton 부재 시에도 env 라인은 남긴다 (import 실패는 각 테스트에서 격리)
     emit("-", "env", "INFO", gpu=torch.cuda.get_device_name(0).replace(" ", "_"),
          capability=str(cap).replace(" ", ""), torch=torch.__version__,
-         triton=getattr(__import__("triton"), "__version__", "?"))
+         triton=triton_ver)
     if cap != (8, 0) and os.environ.get("PROBE_ALLOW_NON_SM80") != "1":
         emit("-", "env", "FAIL_NOT_SM80", capability=str(cap).replace(" ", ""))
         sys.exit(3)
@@ -430,12 +476,14 @@ def main():
 
     any_crash = False
     any_fail = False
+    n_loaded = 0
     for name in impls:
         mod = load_impl(name)
         if mod is None:
             if args.impl != "auto":
                 sys.exit(3)
             continue
+        n_loaded += 1
         H = 4
         for dt in dtypes:
             for cu in (CU_MIX, CU_ONE):
@@ -469,6 +517,13 @@ def main():
     ncrash = sum(1 for r in RESULTS if r["verdict"] == "CRASH")
     print(f"PASS={npass} FAIL={nfail} CRASH={ncrash} "
           f"(thr base={THR_BASE} gate={THR_GATE})")
+    if n_loaded == 0:
+        # auto 모드에서 모든 구현 import 실패 — false-green 방지 (exit 계약: 3=임포트 실패)
+        print("PROBE_KDA|impl=-|test=summary|verdict=NO_IMPL_LOADED")
+        sys.exit(3)
+    # RESULTS 기반으로 재산정: run_guard가 격리한 CRASH(perf 포함)를 exit code에 반영
+    any_crash = any_crash or ncrash > 0
+    any_fail = any_fail or nfail > 0
     sys.exit(3 if any_crash else (2 if any_fail else 0))
 
 

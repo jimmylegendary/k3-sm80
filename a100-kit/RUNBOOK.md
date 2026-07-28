@@ -96,9 +96,11 @@ Stage 1 프로브 실행:
 
 ```bash
 cd <이 킷 디렉터리>   # k3-sm80/a100-kit
+mkdir -p results
 bash probe_35922.sh                       # arm A~E 전부 (FP4 arm 포함; 스킵은 PROBE_ARMS로)
-python probe_kda_fla.py --impl main       # main vendored 사본 수치검증
-python probe_kda_fla.py --impl main --perf   # (선택) 성능 스모크
+# python 프로브는 stdout이 결과물 — 반드시 tee로 results/에 남긴다 (§4 반출 대상)
+python probe_kda_fla.py --impl main        2>&1 | tee results/probe_kda_fla_main.log
+python probe_kda_fla.py --impl main --perf 2>&1 | tee results/probe_kda_fla_main_perf.log   # (선택)
 ```
 
 ## 3. Stage 2 — kimi-k3 브랜치 소스 빌드 (K3 모델 코드 경로)
@@ -125,6 +127,7 @@ git rev-parse HEAD    # 결과 디렉터리에 반드시 기록
 # TORCH_CUDA_ARCH_LIST=8.0 : A100 전용. Marlin MoE는 CMake가 "8.0+PTX;12.0f"와 교집합을 취해
 #   sm80 커널을 빌드한다(INT4 + bf16-act NVFP4/MXFP4 전부 sm80_kernel_*.cu에 인스턴스화 — recon (5)).
 # FlashKDA: cmake가 "FlashKDA will not compile: ... SM90, SM10x, or SM12x ..." 경고 후 스킵 — 정상.
+set -o pipefail                       # 아래 `... | tee` 파이프가 빌드 실패 exit code를 삼키지 않게
 export TORCH_CUDA_ARCH_LIST=8.0
 export MAX_JOBS=32                    # 노드 코어 수에 맞춰 조절 (RAM 부족 시 16으로)
 export CCACHE_DIR=$HOME/.ccache       # ccache 있으면 재빌드 가속 (없어도 무방)
@@ -152,8 +155,11 @@ print("fused_kda_decode compiled:", hasattr(torch.ops._C, "fused_kda_decode"), "
 EOF
 
 # ---- 업스트림 KDA 테스트 (A100 수치검증 — FLA CI는 H100 전용이라 이게 첫 SM80 공식 대조) ----
+# 주의: tests/kernels/test_kda.py는 main(d223c900)/v0.26.0에는 있으나 kimi-k3 pin(0498dc7)
+#       트리에는 **없다**(git trees API 전수 확인, 2026-07-28) — K3 브랜치는 KDA 테스트를
+#       tests/models/kimi_k3/ 2종으로 대체했다. main vendored 사본의 수치검증은
+#       Stage 1의 `probe_kda_fla.py --impl main`이 동일 naive-fp32 대조로 커버한다.
 pip install pytest
-pytest tests/kernels/test_kda.py -x -q                  # main 계열 vendored 사본 대상
 pytest tests/models/kimi_k3/test_kda.py -x -q           # K3 전용 757줄 테스트 (경로는 브랜치 기준)
 pytest tests/models/kimi_k3/test_kda_metadata.py -x -q
 ```
@@ -162,20 +168,24 @@ Stage 2 프로브 실행:
 
 ```bash
 cd <이 킷 디렉터리>
-python probe_kda_fla.py --impl k3          # K3 사본 수치검증 (T4/T5/T6)
-python probe_kda_fla.py --impl fla         # (선택) pip fla 0.5.0 교차대조
-python probe_k3_modules.py                 # K3 모듈 dummy-weight e2e
-PROBE_ATTN_BACKEND=TRITON_MLA python probe_k3_modules.py --stages S3   # (선택) MLA 백엔드 강제 시도
+mkdir -p results
+python probe_kda_fla.py --impl k3  2>&1 | tee results/probe_kda_fla_k3.log    # K3 사본 (T4/T5/T6)
+python probe_kda_fla.py --impl fla 2>&1 | tee results/probe_kda_fla_fla.log   # (선택) pip fla 교차대조
+python probe_k3_modules.py         2>&1 | tee results/probe_k3_modules.log    # K3 모듈 dummy-weight e2e
+PROBE_ATTN_BACKEND=TRITON_MLA python probe_k3_modules.py --stages S3 \
+    2>&1 | tee results/probe_k3_modules_tritonmla.log                          # (선택) MLA 백엔드 강제
 ```
 
 ## 4. 실행 순서 요약 + 결과 수집
 
 ```
 1. §1 사전조건 → 2. Stage 1 설치 → 3. probe_35922.sh → 4. probe_kda_fla --impl main
-→ 5. Stage 2 빌드 → 6. pytest KDA 3종 → 7. probe_kda_fla --impl k3 → 8. probe_k3_modules.py
+→ 5. Stage 2 빌드 → 6. pytest KDA 2종 → 7. probe_kda_fla --impl k3 → 8. probe_k3_modules.py
 ```
 
-각 프로브는 `results/` 아래 타임스탬프 디렉터리에 로그와 `SUMMARY.txt`(기계판독 `PROBE...|` 라인)를 남긴다.
+결과물 위치: probe_35922.sh는 `results/probe_35922_<ts>/`에 로그+`SUMMARY.txt`를 스스로 남기고,
+**python 프로브 2종은 stdout이 결과물**(기계판독 `PROBE...|` 라인)이라 §2/§3의 `| tee results/*.log`가
+반출 파일을 만든다 — tee 없이 돌렸으면 스크롤백에서 복사해 저장할 것.
 반출:
 
 ```bash
@@ -200,5 +210,5 @@ tar czf k3-sm80-probe-results-$(date +%Y%m%d).tgz results/ ~/k3-sm80-work/build-
 | `flashinfer.ai` 접속 불가 | §1.3 참조 — PyPI의 flashinfer-python 0.6.15.post1로 충족. `pip install -r requirements/cuda.txt`는 flashinfer-cubin에서 실패할 수 있으나 `pip install -e .`는 영향 없음. |
 | 빌드 중 OOM/컴파일러 킬 | `MAX_JOBS`를 16→8로. nvcc 병렬이 램을 크게 먹는다(코어당 ~2GB 가정). |
 | `0498dc7` checkout 실패 | force-push. §3 스크립트가 새 head로 폴백 + 해시 기록. DECISION-TREE "브랜치 드리프트" 절차(변경 diff 확인 후 프로브 재실행) 수행. |
-| pytest `tests/models/kimi_k3/` 경로 없음 | 브랜치가 테스트를 이동/개명했을 가능성 → `git log --oneline -- tests/ | head`로 확인, `find tests -name "*kda*"`. |
+| pytest `tests/models/kimi_k3/` 경로 없음 | 브랜치가 테스트를 이동/개명했을 가능성 → `git log --oneline -- tests/ | head`로 확인, `find tests -name "*kda*"`. (참고: `tests/kernels/test_kda.py`는 pin 0498dc7에 원래 없음 — §3 주석) |
 | wheel 설치인데 probe_k3_modules가 S0에서 실패 | 정상 — K3 모델 코드는 wheel(0.26.0)에 없다. Stage 2 venv에서 실행할 것. |

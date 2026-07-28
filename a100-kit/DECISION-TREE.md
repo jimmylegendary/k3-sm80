@@ -3,7 +3,8 @@
 작성: 2026-07-28 · 스펙 `docs/superpowers/specs/2026-07-28-k3-sm80-serving-design.md`의
 Phase 2(우회→커널) / Phase 3(재양자화) 분기와 1:1로 연결. 근거는 전부 `recon/*.md`.
 
-실행 순서(RUNBOOK §4): probe_35922 → probe_kda_fla(main) → [소스빌드] → pytest KDA 3종
+실행 순서(RUNBOOK §4): probe_35922 → probe_kda_fla(main) → [소스빌드] → pytest KDA 2종
+(tests/models/kimi_k3/ — main 계열 test_kda.py는 pin 0498dc7 트리에 없음, RUNBOOK §3 주석)
 → probe_kda_fla(k3) → probe_k3_modules.
 
 전제 사실 (recon에서 확정, 프로브가 뒤집을 수 있는 것만 여기서 다룸):
@@ -21,6 +22,11 @@ Phase 2(우회→커널) / Phase 3(재양자화) 분기와 1:1로 연결. 근거
 
 ### 1.1 주 판정: arm A(W4A16 auto) × arm C(W4A16 triton)
 
+verdict 문자열 매핑(스크립트 `classify()`는 아래 표보다 거친 분류를 낸다): 표의
+"FAIL (ValueError/oracle 거부)"는 스크립트 verdict `FAIL_OTHER_rc=*`/`FAIL_AFTER_INIT_rc=*`
+중 **로그에 거부 사유(ValueError/oracle)** 가 있는 경우, "CRASH (런타임)"는 `CRASH_*` 또는
+트레이스가 CUDA/커널 예외인 `FAIL_AFTER_INIT` — 최종 분류는 `logs/arm_*.log` 원문 기준.
+
 | A (재현) | C (우회) | 판정 | 다음 행동 |
 |---|---|---|---|
 | CRASH_IMA | SUCCESS | **예상 시나리오.** #35922 미수정 확정 + 우회 1안 성립 | ① Phase 2 우회 1안(MoE=Triton W4A16) 확정. ② **Phase 3 재양자화를 "조건부"→"필수 경로"로 격상** — 원본 MXFP4는 auto로 Marlin뿐이라 crash 미해결 시 서빙 불가(단 §1.3 E=SUCCESS면 완화). ③ arm B 결과로 커널 수정 트랙 병행 여부 결정(§1.2) |
@@ -29,8 +35,15 @@ Phase 2(우회→커널) / Phase 3(재양자화) 분기와 1:1로 연결. 근거
 | SUCCESS | (any) | #35922가 이 환경/버전에서 재현 안 됨 — recon (1)("버그픽스 커밋 0건")과 모순 | wheel(0.26.0)과 이슈(0.16.0)의 차이로 조용히 수정됐을 가능성. ① 소스빌드(Stage 2)에서 arm A 재실행해 wheel/빌드 차이 배제. ② 그래도 SUCCESS면: **원본 MXFP4 Marlin 직행 가능성 재평가**(arm E가 결정적) — Phase 3 필요성이 성능 사유로만 남음 |
 | TIMEOUT | — | profile_run이 안 끝남 (이슈 본문은 7분 소요 사례) | `PROBE_TIMEOUT_ARM=7200` 재실행. 그래도면 hang으로 분류 — py-spy dump + 보고 |
 | FAIL_OOM | — | 80GB에서 발생하면 설정 문제 | `PROBE_GPU_MEM_UTIL=0.8 PROBE_MAX_MODEL_LEN=8192`로 재실행 (판정 목적에는 충분) |
+| CRASH_NO_KERNEL_IMAGE | — | 실행 바이너리에 sm80 Marlin INT4 커널 부재 — recon (5)("8.0+PTX" 릴리스 포함)와 모순 | wheel이면 Stage 2 소스빌드(TORCH_CUDA_ARCH_LIST=8.0)에서 arm A 재실행. 소스빌드도 같으면 recon (5) 재조사 + 판정 보류·보고 (§1.3 arm E와 동일 처리 계열) |
+| FAIL_AFTER_INIT_rc=* / FAIL_OTHER_rc=* | — | 크래시·OOM·타임아웃 어느 패턴에도 안 걸린 실패 (HF 인증/디스크/의존성 등 환경 문제 가능성 우선) | `logs/arm_*.log` 전문에서 예외 원문 확인 → 환경 문제면 §1 사전조건 재점검 후 재실행, vLLM 예외면 트레이스 첨부해 보고 (판정표에 우겨넣지 말 것 — 미분류 실패는 재현 로그가 판정보다 우선) |
+| (meta) PREFETCH_FAIL_W4A16 / PREFETCH_FAIL_MXFP4 | — | HF 다운로드 실패 — 해당 arm 자동 스킵됨 | §1.3/§1.4 사전조건(네트워크·디스크) 재점검 → `PROBE_SKIP_DOWNLOAD=1`(캐시 있을 때) 또는 재시도. 스킵된 arm이 있는 채로 종합 판정(§4)으로 넘어가지 말 것 |
 
 ### 1.2 arm B (compute-sanitizer memcheck) — 원인 특정
+
+주: arm B의 SUMMARY verdict에는 `_WITH_SAN_ERRORS` 접미사가 붙을 수 있다(memcheck는 invalid
+access를 보고만 하고 앱을 계속 진행시킬 수 있음 — 예: `SUCCESS_WITH_SAN_ERRORS`). 이 표는
+접미사·base verdict와 무관하게 **sanitizer 로그 내용**(`logs/sanitizer_B.log`)으로 분기한다.
 
 | sanitizer 출력 | 해석 | 다음 행동 |
 |---|---|---|
@@ -38,6 +51,7 @@ Phase 2(우회→커널) / Phase 3(재양자화) 분기와 1:1로 연결. 근거
 | Invalid access이지만 다른 커널/위치 | 새 원인 | 스택·좌표 기록 → vLLM 이슈 갱신(새 이슈 or #36811에 코멘트) + 수정 난이도 재평가 |
 | sanitizer clean인데 crash 재현 | 동기화/레이스 계열 의심 | `--tool racecheck`, `--tool synccheck` 재실행. CUDA graph 관련이면 eager 여부 재확인(프로브는 eager 고정) |
 | sanitizer 하에서 crash 미재현 | 타이밍 민감 버그 | 이 자체가 레이스 증거에 가까움 — racecheck 우선 |
+| SKIPPED_NO_SANITIZER | compute-sanitizer 미설치 (CUDA 툴킷 부재 노드) | §1.1 판정(A×C)만으로 Phase 2 우회 여부는 결정 가능. 단 **커널수정 트랙(§1.2 행 1)은 sanitizer 없이 착수 금지** — CUDA 툴킷 설치(RUNBOOK §6 nvcc 항목) 후 arm B만 재실행 (`PROBE_ARMS="B"`) |
 
 ### 1.3 arm D/E (gpt-oss-20b, MXFP4) — K3 원본 경로 대리 판정
 
@@ -67,7 +81,10 @@ K3 compressed-tensors mxfp4-pack) — 커널 가족 판정으로만 사용.
 
 | 결과 | 판정 | 다음 행동 |
 |---|---|---|
-| 전부 PASS (main+k3, bf16+fp16) + pytest 3종 green | **KDA SM80 리스크 해소** — recon/kda-fla.md §5-1의 "수치 검증 공백" 닫힘 | Phase 2 KDA=Triton 확정(`kda_prefill_backend="triton"` 명시). 스펙 리스크 항목("KDA prefill 수치 미검증") 종결. state 레이아웃 보고값(T2/T3의 `state_layout`)을 hat-kv-manager 산정 문서에 기록 |
+| 전부 PASS (main+k3, bf16+fp16) + pytest 2종 green | **KDA SM80 리스크 해소** — recon/kda-fla.md §5-1의 "수치 검증 공백" 닫힘 | Phase 2 KDA=Triton 확정(`kda_prefill_backend="triton"` 명시). 스펙 리스크 항목("KDA prefill 수치 미검증") 종결. state 레이아웃 보고값(T2/T3의 `state_layout`)을 hat-kv-manager 산정 문서에 기록 |
+| impl=..\|test=import\|verdict=UNAVAILABLE (또는 summary NO_IMPL_LOADED, exit 3) | 대상 구현 import 실패 — venv/브랜치 불일치 (§3 S0와 동일 원인 계열) | `--impl main`은 Stage 1 venv, `--impl k3`는 Stage 2 venv에서만 성립(RUNBOOK §2/§3). 올바른 venv인데도 실패면 브랜치 드리프트 절차(§5)로 import 경로 재확인 |
+| FAIL_TORCH_IMPORT / FAIL_NO_CUDA / FAIL_NOT_SM80 (exit 3) | 환경 게이트 — GPU 노드가 아니거나 venv 미활성/비SM80 | RUNBOOK §1/§2 사전조건 재점검 후 올바른 노드·venv에서 재실행 (판정 아님). non-SM80 강행은 `PROBE_ALLOW_NON_SM80=1` — 단 SM80 판정과 비교 불가 |
+| verdict=INFO (env, PERF_*) | 판정 라인 아님 — 환경 스냅샷·성능 참고치 | 행동 없음. PERF 수치는 Phase 0 hatir 판정치와 대조해 기록만 (게이트는 Phase 0 소관) |
 | 일부 FAIL, rmse ≤ 4×임계 (회색지대) | SM80 수치 열화 의심 (H100 CI 기준과 괴리) | ① fp16과 bf16 중 어느 쪽인지 확인(bf16만 회색 = 정밀도 특성일 수 있음). ② 동일 시드로 3회 반복 — autotune 비결정성 분리. ③ H100 대비가 필요하면 결과를 갖고 upstream(vLLM tests/kernels/test_kda.py 값)과 비교 후 FLA/vLLM에 보고. Phase 2는 **보류 아님**(회색은 진행하되 e2e ppl 체크 추가) |
 | FAIL, rmse > 4×임계 | 커널 버그 (SM80 특이) | FLA에 이슈 보고(재현 스크립트 = 이 프로브) + vLLM(벤더링 사본 소관)에도. 완화 실험: chunk 커널 autotune 후보 고정(BT=32/64/128 개별) 후 재측정 — 특정 config만 깨지면 해당 config 제외 패치로 Phase 2 진행 가능 |
 | CRASH (triton 컴파일/런타임) | FLA #625류 (autotune×환경 상호작용) 또는 SM80 미지 이슈 | triton 버전 기록(env INFO 라인) → triton 업/다운그레이드 1회 시도(torch 동봉 버전 우선) → 재현 시 FLA 이슈 + vLLM 이슈. **KDA가 막히면 Phase 2 전체가 막히므로 최우선 에스컬레이션** |
@@ -78,10 +95,17 @@ K3 compressed-tensors mxfp4-pack) — 커널 가족 판정으로만 사용.
 
 ## 3. probe_k3_modules (K3 모듈 SM80) — 분기
 
+주: `MODEL_PREP_OK`/`ENGINE_INIT_OK`/`GENERATE_OK`는 진행 라인(판정 아님 — 다음 단계 계속).
+`WARN_*`는 exit code에 반영되지 않는 참고 라인 — 드리프트 신호로 기록만 하되, 반복되면 recon 갱신.
+
 | 결과 | 판정 | 다음 행동 |
 |---|---|---|
+| S0 FAIL_TORCH_IMPORT / FAIL_NO_CUDA / FAIL_NOT_SM80 / FAIL_VLLM_IMPORT | 환경 게이트 — GPU 노드/venv 문제 (K3 판정 아님) | RUNBOOK §1/§3 사전조건·venv 재점검 후 재실행 |
 | S0 FAIL_NOT_K3_BRANCH | wheel/main 빌드에서 실행됨 | Stage 2 venv 확인. **PR #50000이 main에 머지된 뒤라면**: main 새 커밋으로 재고정하고 recon (4) 갱신 (모델 코드 경로가 `vllm/models/kimi_k3/` 그대로인지 확인) |
-| S1 UNEXPECTED_* | SM80 게이트 로직이 recon 스냅샷과 달라짐 | 해당 함수 소스 재열람 → recon/vllm-upstream.md (2) 갱신 → 프로브 기대값 수정 후 재실행 |
+| S1 FAIL_IMPORT_KDA_FUNCS | 함수 이동/개명 의심 | 브랜치 드리프트 절차(§5) — import 경로 재확인 후 프로브 수정·재실행 |
+| S1 UNEXPECTED_* / FAIL_RESOLVE_AUTO / FAIL_AUTO_NOT_TRITON | SM80 게이트 로직이 recon 스냅샷과 달라짐 | 해당 함수 소스 재열람 → recon/vllm-upstream.md (2) 갱신 → 프로브 기대값 수정 후 재실행 |
+| S2 FAIL_NOT_REGISTERED | `KimiK3ForConditionalGeneration`이 레지스트리에 없음 — 브랜치 드리프트(등록 클래스 개명) 의심 | `ModelRegistry.get_supported_archs()` 출력에서 `Kimi*` 검색 → 개명 확인 시 §5 절차 + probe/recon의 클래스명 갱신. S3는 config `architectures` 매칭이 실질이므로 S3 결과와 교차 확인 |
+| S3 FAIL_MODEL_PREP | HF 소형파일 다운로드/축소 config 생성 실패 (엔진 도달 전) | 네트워크·디스크 확인 → 재실행. `moonshotai/Kimi-K3` revision `9f62e4e9` 접근 불가면 recon/k3-config.md의 pin 재확인(리포 개편 가능성) 후 새 revision 기록. config 구조 드리프트(KeyError)면 recon/k3-config.md 갱신 + mutate 규칙 수정 |
 | S3 FAIL_ENGINE_INIT — 트레이스가 quantization/MoE 계열 | K3 구현이 mxfp4 전제를 하드코딩했을 가능성 (recon [미확인] 항목) | tiny config에 실물 `quantization_config`(config.full.json에 보존됨)를 되살려 재시도 — 단 그러면 Marlin-MXFP4 경로를 타므로 #35922 crash와 얽힘(arm E 결과 참조). 하드코딩 확인 시 PR #50000에 보고 |
 | S3 FAIL_ENGINE_INIT — processor/vision 계열 | 멀티모달 전처리 요구 파일 문제 | 다운로드 파일 목록 확인(kimi_k3_processor.py, preprocessor_config.json 포함 여부) → allow_patterns 확장 재시도 |
 | S3 FAIL_ENGINE_INIT — OOM | dummy라도 활성/캐시 산정 초과 | `PROBE_GPU_MEM_UTIL=0.8` 또는 max_model_len 512로 재시도 |
@@ -127,6 +151,6 @@ kimi-k3 브랜치가 pin(0498dc7)에서 움직였거나 main에 머지된 경우
 - [ ] `results/probe_35922_*/SUMMARY.txt` + `logs/` (sanitizer 로그 포함)
 - [ ] `probe_kda_fla` stdout 전문 (PROBE_KDA| 라인 + rmse 값들)
 - [ ] `probe_k3_modules` stdout 전문 (PROBE_K3M| + S3_BACKEND_REPORT| 라인)
-- [ ] pytest 3종 결과 (`-q` 요약이면 충분)
+- [ ] pytest 2종 결과 (`-q` 요약이면 충분; tests/models/kimi_k3/ 2파일 — RUNBOOK §3 주석 참조)
 - [ ] `build-k3.log` 마지막 200줄 + `K3_BRANCH_ACTUAL_COMMIT.txt` (있으면)
 - [ ] env.txt (driver/nvcc/pip freeze)
