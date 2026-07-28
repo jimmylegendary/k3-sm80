@@ -92,6 +92,8 @@ def collect_env() -> dict:
     env["nvidia_smi"] = smi
     env["compute_sanitizer"] = find_compute_sanitizer()
     env["torch_cuda_arch_list"] = os.environ.get("TORCH_CUDA_ARCH_LIST")
+    env["in_venv"] = sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+    env["python_exe"] = sys.executable
     return env
 
 
@@ -109,11 +111,24 @@ def check_preconditions(env: dict, cpu_dry_run: bool = False) -> tuple[bool, lis
             add(name, "SKIP", "--cpu-dry-run: GPU 사전조건 검사 생략 (참조 경로만 실행)")
         return True, checks
 
+    # venv 미사용은 torch/vllm 미탐의 1순위 원인 — 가장 먼저 보여준다
+    if env.get("in_venv"):
+        add("venv", "PASS", env.get("python_exe", ""))
+    else:
+        add("venv", "SKIP",
+            f"시스템 python({env.get('python_exe')}) 실행 중 — GPU가 있어도 torch/vllm 이 "
+            "여기 없으면 연쇄 FAIL. 해결: `bash a100-kit/bootstrap.sh --stage2` (자동 구성) "
+            "또는 RUNBOOK §2/§3 venv activate 후 재실행")
+
     if not env.get("torch"):
-        add("torch+cuda", "FAIL", "torch import 실패 — a100-kit/RUNBOOK.md §2/§3 venv에서 실행할 것")
+        add("torch+cuda", "FAIL",
+            "torch import 실패 — GPU 유무는 torch 를 통해 보므로 이 항목이 죽으면 GPU 검사도 "
+            "연쇄 FAIL. 해결: `bash a100-kit/bootstrap.sh --stage1`(wheel, 빠름) 또는 "
+            "`--stage2`(kimi-k3 소스빌드) / 이미 구성했다면 해당 venv activate 후 재실행")
     elif not env.get("cuda_available"):
         add("torch+cuda", "FAIL",
-            f"torch {env['torch']} 는 있으나 CUDA 사용 불가 (드라이버/가시성 확인: nvidia-smi)")
+            f"torch {env['torch']} 는 있으나 CUDA 사용 불가 — nvidia-smi 동작 여부/드라이버 버전"
+            "(RUNBOOK §1.1·§6.1)/CUDA_VISIBLE_DEVICES 확인. pip 로 해결 안 되는 항목")
     else:
         add("torch+cuda", "PASS", f"torch {env['torch']} / cuda {env.get('torch_cuda')}")
 
@@ -130,7 +145,13 @@ def check_preconditions(env: dict, cpu_dry_run: bool = False) -> tuple[bool, lis
         add("sm80", "FAIL", "GPU 없음 — SM80 확인 불가")
 
     add("triton", "PASS" if env.get("triton") else "FAIL",
-        env.get("triton") or "triton 미설치 (k01~k04 Triton 커널 실행 불가)")
+        env.get("triton") or "triton 미설치 (k01~k04 Triton 커널 실행 불가) — torch 설치에 "
+        "수반됨. 해결: bootstrap 또는 해당 venv 에서 `pip install triton`")
+
+    # vllm 은 env_check 를 막지 않는다(k06/k07 은 불필요) — 단 k01~k05 는 개별 rc=2 로 skip 됨
+    add("vllm", "PASS" if env.get("vllm") else "SKIP",
+        env.get("vllm") or "vllm import 불가 — k01~k05 하네스가 각자 rc=2 로 skip 된다. "
+        "해결: `bash a100-kit/bootstrap.sh --stage2` (kimi-k3 소스빌드 venv)")
 
     # sanitizer는 없어도 진행은 가능(SANITIZER 게이트가 SKIP 사유를 남김) → WARN 성격의 SKIP
     if env.get("compute_sanitizer"):

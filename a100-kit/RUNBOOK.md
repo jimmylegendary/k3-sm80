@@ -24,6 +24,18 @@
 checkout 실패(force-push로 커밋 소실) 시 `git fetch origin pull/50000/head`로 새 head를 받되
 **새 커밋 해시를 결과 로그에 기록**하고 DECISION-TREE의 "브랜치 드리프트" 절차를 따른다.
 
+## 0.5 지름길 — 원커맨드 부트스트랩 (수동 절차 §2/§3의 자동화, 멱등)
+
+```bash
+bash a100-kit/bootstrap.sh --stage1 --yes   # venv-probe: vllm==0.26.0 wheel (분 단위)
+bash a100-kit/bootstrap.sh --stage2 --yes   # venv-k3: kimi-k3 pin 소스빌드 (40~90분)
+# 작업 위치 기본 ~/k3-sm80-work (K3_WORK_DIR 로 변경). GPU/드라이버 문제만 수동(§1.1·§6.1).
+# kernel-kit/run_all.sh 는 이 venv 들을 자동 감지한다 — activate 없이 실행해도 됨.
+# run_all.sh 가 사전조건 미충족(rc=2)일 때 AUTO_FIX=1 bash run_all.sh 로 stage1 자동 구성 가능.
+```
+
+수동으로 단계별 확인이 필요하면 아래 §1~§3 을 따른다. bootstrap 은 §2/§3 과 같은 pin 을 쓴다.
+
 ## 1. 사전조건 점검 (노드에서 가장 먼저 실행)
 
 ```bash

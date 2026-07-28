@@ -1,5 +1,10 @@
 # kernel-kit RUNNER — S2 커널 단독 검증 사내 실행 절차
 
+> **환경이 안 잡힐 때(사전조건 미충족)**: `run_all.sh` 가 항목별 FAIL 표와 해결 명령을
+> 출력한다. 최다 원인 = venv 미활성(시스템 python 에 torch 없음). 자동 구성:
+> `bash ../a100-kit/bootstrap.sh --stage2 --yes` (또는 `AUTO_FIX=1 bash run_all.sh` 로
+> stage1 자동 구성). run_all.sh 는 `~/k3-sm80-work` 의 venv-k3/venv-probe 를 자동 감지한다.
+
 작성: 2026-07-28 · 러너: Jimmy (사내 A100 노드) · 계약: `docs/PLAN.md` §S2
 핀: vLLM kimi-k3 `0498dc7e` / main `d223c900` / HF Kimi-K3 `9f62e4e9` (a100-kit RUNBOOK §0과 동일)
 

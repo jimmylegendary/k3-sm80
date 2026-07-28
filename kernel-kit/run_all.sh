@@ -25,15 +25,38 @@ for a in "$@"; do
 done
 
 mkdir -p "$REPORT_DIR"
-echo "[run_all] kit=$KIT_DIR report=$REPORT_DIR verdict=$VERDICT mode=${DRY:-gpu}"
+
+# ---- python 선택: venv 자동 감지 (PYTHON > VIRTUAL_ENV > K3_WORK_DIR 의 venv) ----
+# RUNBOOK 규약: 작업 디렉터리 ~/k3-sm80-work (K3_WORK_DIR 로 변경 가능)에 venv-k3(소스빌드,
+# 우선) / venv-probe(Stage1 wheel) — activate 없이 실행해도 여기서 자동으로 잡는다.
+WORK="${K3_WORK_DIR:-$HOME/k3-sm80-work}"
+if [[ -n "${PYTHON:-}" ]]; then PY="$PYTHON"
+elif [[ -n "${VIRTUAL_ENV:-}" ]]; then PY="python3"
+elif [[ -x "$WORK/venv-k3/bin/python3" ]]; then
+  PY="$WORK/venv-k3/bin/python3"; echo "[run_all] venv 자동선택: $WORK/venv-k3"
+elif [[ -x "$WORK/venv-probe/bin/python3" ]]; then
+  PY="$WORK/venv-probe/bin/python3"
+  echo "[run_all] venv 자동선택: $WORK/venv-probe (Stage1 wheel — K3 브랜치 전용 경로는 venv-k3 권장)"
+else PY="python3"; fi
+echo "[run_all] kit=$KIT_DIR report=$REPORT_DIR verdict=$VERDICT mode=${DRY:-gpu} python=$PY"
 
 # ---- 0) 사전조건 (env_check가 판정·메시지 담당) --------------------------------
-python3 "$KIT_DIR/common/env_check.py" --json $DRY > "$REPORT_DIR/env.json"
+"$PY" "$KIT_DIR/common/env_check.py" --json $DRY > "$REPORT_DIR/env.json"
 rc=$?
-python3 "$KIT_DIR/common/env_check.py" $DRY --quiet >/dev/null 2>&1 || true
+if [[ $rc -eq 2 && "${AUTO_FIX:-0}" == "1" && -z "$DRY" ]] \
+   && command -v nvidia-smi >/dev/null && nvidia-smi -L >/dev/null 2>&1; then
+  # GPU 는 있는데 python 환경이 문제 → bootstrap 으로 자동 조치 후 1회 재시도
+  echo "[run_all] AUTO_FIX=1 — GPU 확인됨, bootstrap 으로 환경 자동 구성 시도" >&2
+  bash "$(dirname "$KIT_DIR")/a100-kit/bootstrap.sh" --stage1 --yes >&2 || true
+  [[ -x "$WORK/venv-probe/bin/python3" ]] && PY="$WORK/venv-probe/bin/python3"
+  "$PY" "$KIT_DIR/common/env_check.py" --json $DRY > "$REPORT_DIR/env.json"
+  rc=$?
+fi
 if [[ $rc -eq 2 ]]; then
-  echo "[run_all] GPU 사전조건 미충족 — 커널 실행 skip (상세: $REPORT_DIR/env.json)." >&2
-  echo "[run_all] GPU 없는 호스트에서는 'bash run_all.sh --cpu-dry-run' 을 쓸 것." >&2
+  echo "[run_all] GPU 사전조건 미충족 — 항목별 판정 (FAIL 의 '해결:' 을 따를 것):" >&2
+  "$PY" "$KIT_DIR/common/env_check.py" $DRY >&2 || true
+  echo "[run_all] 자동 구성: bash a100-kit/bootstrap.sh --stage1|--stage2  (GPU/드라이버 문제만 수동)" >&2
+  echo "[run_all] GPU 없는 호스트에서는 'bash run_all.sh --cpu-dry-run' 을 쓸 것. (상세: $REPORT_DIR/env.json)" >&2
   exit 2
 elif [[ $rc -ne 0 ]]; then
   echo "[run_all] env_check 내부 오류 (rc=$rc)" >&2
@@ -42,11 +65,11 @@ fi
 
 # ---- 1) 프레임워크 자체점검 (호스트 게이트: py_compile + selftest green) --------
 echo "[run_all] 프레임워크 자체점검"
-python3 -m py_compile "$KIT_DIR"/common/*.py || exit 3
-python3 "$KIT_DIR/common/shapes.py" --check > "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] shapes selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
-python3 "$KIT_DIR/common/tolerance.py" >> "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] tolerance selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
-python3 "$KIT_DIR/common/timing.py" --selftest --phase0-verdict "$VERDICT" >> "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] timing selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
-python3 "$KIT_DIR/common/report.py" --selftest --report-dir "$REPORT_DIR" >> "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] report selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
+"$PY" -m py_compile "$KIT_DIR"/common/*.py || exit 3
+"$PY" "$KIT_DIR/common/shapes.py" --check > "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] shapes selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
+"$PY" "$KIT_DIR/common/tolerance.py" >> "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] tolerance selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
+"$PY" "$KIT_DIR/common/timing.py" --selftest --phase0-verdict "$VERDICT" >> "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] timing selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
+"$PY" "$KIT_DIR/common/report.py" --selftest --report-dir "$REPORT_DIR" >> "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] report selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
 echo "[run_all] 자체점검 green (framework-selftest.log)"
 
 # ---- 2) 커널 하네스 순차 실행 ---------------------------------------------------
@@ -63,14 +86,14 @@ for k in $KERNELS; do
   fi
   echo "[run_all] ── $k 실행 ($H)"
   t0=$SECONDS
-  python3 "$H" --phase0-verdict "$VERDICT" --report-dir "$REPORT_DIR" $DRY \
+  "$PY" "$H" --phase0-verdict "$VERDICT" --report-dir "$REPORT_DIR" $DRY \
     2>&1 | tee "$REPORT_DIR/$k.log"
   RC[$k]=${PIPESTATUS[0]}
   echo "[run_all] $k 종료 rc=${RC[$k]} ($((SECONDS - t0))s)"
 done
 
 # ---- 3) 집계 + 반출 -------------------------------------------------------------
-python3 "$KIT_DIR/common/report.py" --aggregate "$REPORT_DIR" --expect $KERNELS
+"$PY" "$KIT_DIR/common/report.py" --aggregate "$REPORT_DIR" --expect $KERNELS
 AGG_RC=$?
 
 STAMP=$(date +%Y%m%d-%H%M%S)

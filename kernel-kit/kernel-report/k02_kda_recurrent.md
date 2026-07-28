@@ -1,7 +1,7 @@
 # k02_kda_recurrent — KDA recurrent decode (fused_recurrent_kda, Triton)
 
 - 종합: **INCOMPLETE** (cpu-dry-run — 실커널 미실행)
-- 생성: 2026-07-28T10:03:14+00:00 · 소요 0.003s · repo db3c9de
+- 생성: 2026-07-28T12:19:22+00:00 · 소요 0.003s · repo a7693a3
 
 | 게이트 | 판정 | 사유 |
 |---|---|---|
