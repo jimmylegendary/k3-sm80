@@ -1,0 +1,118 @@
+{
+  "env": {
+    "compute_sanitizer": null,
+    "cuda_available": false,
+    "host": "jimmy-SER",
+    "numpy": "2.4.2",
+    "nvidia_smi": null,
+    "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "python": "3.14.3",
+    "repo_commit": "beda848",
+    "torch": null,
+    "torch_cuda_arch_list": null,
+    "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
+    "triton": null,
+    "vllm": null
+  },
+  "evidence": {
+    "dry_run": {
+      "cases_validated": [
+        "one_expert_w13",
+        "one_expert_w2",
+        "active16_experts"
+      ],
+      "dequant_sim": {
+        "exact_passed": true,
+        "metrics": {
+          "case": "dry_int4g128_exact",
+          "max_abs": 0.0,
+          "mismatch_frac": 0.0,
+          "n": 16384,
+          "nan_out": 0,
+          "nan_ref": 0,
+          "policy": {
+            "atol": 0.0,
+            "mismatch_frac": 0.0,
+            "rmse_rel": 0.001,
+            "rtol": 0.0078125
+          },
+          "rel_mean_abs": 0.0,
+          "rmse_rel": 0.0
+        },
+        "perturbed_detected": true
+      },
+      "roofline_predictions_us": {
+        "active16_experts": {
+          "bound": "mem",
+          "params": 528482304,
+          "roofline_us": 652.0173104462972,
+          "t_alu_us": 108.45200945626478,
+          "t_mem_us": 652.0173104462972,
+          "t_tc_us": 0.0
+        },
+        "one_expert_w13": {
+          "bound": "mem",
+          "params": 11010048,
+          "roofline_us": 13.583693967631191,
+          "t_alu_us": 2.2594168636721825,
+          "t_mem_us": 13.583693967631191,
+          "t_tc_us": 0.0
+        },
+        "one_expert_w2": {
+          "bound": "mem",
+          "params": 11010048,
+          "roofline_us": 13.583693967631191,
+          "t_alu_us": 2.2594168636721825,
+          "t_mem_us": 13.583693967631191,
+          "t_tc_us": 0.0
+        }
+      }
+    },
+    "purpose": {
+      "consumer": "phase0/k3_model.py — kernel-report/calibration-k06-dequant.json",
+      "prior": 4.0,
+      "target": "dequant_ops_per_param 재보정 (phase0 verdict caveats 의 무근거 밴드 해소)"
+    }
+  },
+  "gates": {
+    "NUMERIC": {
+      "evidence": {},
+      "reason": "cpu-dry-run — 순수 python dequant 판정경로 green, 실커널 비교 없음",
+      "status": "SKIP"
+    },
+    "PERF": {
+      "evidence": {},
+      "reason": "cpu-dry-run — 측정 없음 (measure_only 커널)",
+      "status": "SKIP"
+    },
+    "SANITIZER": {
+      "evidence": {},
+      "reason": "cpu-dry-run — GPU 미실행",
+      "status": "SKIP"
+    },
+    "SHAPES": {
+      "evidence": {
+        "validated": [
+          "one_expert_w13",
+          "one_expert_w2",
+          "active16_experts"
+        ]
+      },
+      "reason": "cpu-dry-run — 케이스 정의 3건 검증만, 실행 커버 아님",
+      "status": "SKIP"
+    }
+  },
+  "id": "k06_dequant_bench",
+  "meta": {
+    "created_utc": "2026-07-28T08:57:10+00:00",
+    "dry_run": true,
+    "duration_s": 0.071,
+    "pins": {
+      "hf": "moonshotai/Kimi-K3@9f62e4e9",
+      "vllm_kimi_k3": "0498dc7e",
+      "vllm_main": "d223c900"
+    }
+  },
+  "overall": "INCOMPLETE",
+  "schema_version": "s2-kernel-report/v1"
+}

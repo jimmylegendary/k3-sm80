@@ -1,0 +1,469 @@
+{
+  "env": {
+    "compute_sanitizer": null,
+    "cuda_available": false,
+    "host": "jimmy-SER",
+    "numpy": "2.4.2",
+    "nvidia_smi": null,
+    "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "python": "3.14.3",
+    "repo_commit": "beda848",
+    "torch": null,
+    "torch_cuda_arch_list": null,
+    "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
+    "triton": null,
+    "vllm": null
+  },
+  "evidence": {
+    "ctmp_undersized_risk_cases": [
+      "L1_e8_k512",
+      "L2_e64_k1024"
+    ],
+    "dry_run": {
+      "cases_validated": [
+        "L1_e8_k512",
+        "L2_e64_k1024",
+        "L3_e256_k3584",
+        "L4_e896_k512",
+        "m1",
+        "m8",
+        "m32",
+        "m8192_prefill",
+        "L6_e896_k7168"
+      ],
+      "logpoints_analytic_sms108": {
+        "L1_e8_k512": {
+          "basis": "ops.cu@d223c900 L708-717/L852-862 미러; PR#36889(미병합)는 arm1 제거",
+          "block_size_m": 8,
+          "constants": {
+            "max_par": 16,
+            "max_thread_n": 256,
+            "min_thread_n": 64
+          },
+          "gemms": {
+            "gemm1_w13": {
+              "arm1_sizen_x_sortedlen": 36864,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 294912,
+              "c_tmp_elems": 73728,
+              "governed_by": "arm1(batch의존)",
+              "min_workspace": 72,
+              "n_tiles": 8,
+              "size_k": 512,
+              "size_m": 8,
+              "size_n": 512,
+              "undersized_risk_pr36889": true
+            },
+            "gemm2_w2": {
+              "arm1_sizen_x_sortedlen": 36864,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 294912,
+              "c_tmp_elems": 73728,
+              "governed_by": "arm1(batch의존)",
+              "min_workspace": 72,
+              "n_tiles": 8,
+              "size_k": 256,
+              "size_m": 16,
+              "size_n": 512,
+              "undersized_risk_pr36889": true
+            }
+          },
+          "sms": 108,
+          "sorted_len": 72,
+          "sorted_len_is_estimate": true
+        },
+        "L2_e64_k1024": {
+          "basis": "ops.cu@d223c900 L708-717/L852-862 미러; PR#36889(미병합)는 arm1 제거",
+          "block_size_m": 8,
+          "constants": {
+            "max_par": 16,
+            "max_thread_n": 256,
+            "min_thread_n": 64
+          },
+          "gemms": {
+            "gemm1_w13": {
+              "arm1_sizen_x_sortedlen": 720896,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 5767168,
+              "c_tmp_elems": 1441792,
+              "governed_by": "arm1(batch의존)",
+              "min_workspace": 432,
+              "n_tiles": 16,
+              "size_k": 1024,
+              "size_m": 32,
+              "size_n": 1024,
+              "undersized_risk_pr36889": true
+            },
+            "gemm2_w2": {
+              "arm1_sizen_x_sortedlen": 720896,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 5767168,
+              "c_tmp_elems": 1441792,
+              "governed_by": "arm1(batch의존)",
+              "min_workspace": 432,
+              "n_tiles": 16,
+              "size_k": 512,
+              "size_m": 256,
+              "size_n": 1024,
+              "undersized_risk_pr36889": true
+            }
+          },
+          "sms": 108,
+          "sorted_len": 704,
+          "sorted_len_is_estimate": true
+        },
+        "L3_e256_k3584": {
+          "basis": "ops.cu@d223c900 L708-717/L852-862 미러; PR#36889(미병합)는 arm1 제거",
+          "block_size_m": 8,
+          "constants": {
+            "max_par": 16,
+            "max_thread_n": 256,
+            "min_thread_n": 64
+          },
+          "gemms": {
+            "gemm1_w13": {
+              "arm1_sizen_x_sortedlen": 14155776,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 96,
+              "size_k": 3584,
+              "size_m": 32,
+              "size_n": 6144,
+              "undersized_risk_pr36889": false
+            },
+            "gemm2_w2": {
+              "arm1_sizen_x_sortedlen": 8257536,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 56,
+              "size_k": 3072,
+              "size_m": 512,
+              "size_n": 3584,
+              "undersized_risk_pr36889": false
+            }
+          },
+          "sms": 108,
+          "sorted_len": 2304,
+          "sorted_len_is_estimate": true
+        },
+        "L4_e896_k512": {
+          "basis": "ops.cu@d223c900 L708-717/L852-862 미러; PR#36889(미병합)는 arm1 제거",
+          "block_size_m": 8,
+          "constants": {
+            "max_par": 16,
+            "max_thread_n": 256,
+            "min_thread_n": 64
+          },
+          "gemms": {
+            "gemm1_w13": {
+              "arm1_sizen_x_sortedlen": 3473408,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 8,
+              "size_k": 512,
+              "size_m": 32,
+              "size_n": 512,
+              "undersized_risk_pr36889": false
+            },
+            "gemm2_w2": {
+              "arm1_sizen_x_sortedlen": 3473408,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 8,
+              "size_k": 256,
+              "size_m": 512,
+              "size_n": 512,
+              "undersized_risk_pr36889": false
+            }
+          },
+          "sms": 108,
+          "sorted_len": 6784,
+          "sorted_len_is_estimate": true
+        },
+        "L6_e896_k7168": {
+          "basis": "ops.cu@d223c900 L708-717/L852-862 미러; PR#36889(미병합)는 arm1 제거",
+          "block_size_m": 8,
+          "constants": {
+            "max_par": 16,
+            "max_thread_n": 256,
+            "min_thread_n": 64
+          },
+          "gemms": {
+            "gemm1_w13": {
+              "arm1_sizen_x_sortedlen": 41680896,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 96,
+              "size_k": 7168,
+              "size_m": 32,
+              "size_n": 6144,
+              "undersized_risk_pr36889": false
+            },
+            "gemm2_w2": {
+              "arm1_sizen_x_sortedlen": 48627712,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 112,
+              "size_k": 3072,
+              "size_m": 512,
+              "size_n": 7168,
+              "undersized_risk_pr36889": false
+            }
+          },
+          "sms": 108,
+          "sorted_len": 6784,
+          "sorted_len_is_estimate": true
+        },
+        "m1": {
+          "basis": "ops.cu@d223c900 L708-717/L852-862 미러; PR#36889(미병합)는 arm1 제거",
+          "block_size_m": 8,
+          "constants": {
+            "max_par": 16,
+            "max_thread_n": 256,
+            "min_thread_n": 64
+          },
+          "gemms": {
+            "gemm1_w13": {
+              "arm1_sizen_x_sortedlen": 38633472,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 96,
+              "size_k": 3584,
+              "size_m": 1,
+              "size_n": 6144,
+              "undersized_risk_pr36889": false
+            },
+            "gemm2_w2": {
+              "arm1_sizen_x_sortedlen": 22536192,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 56,
+              "size_k": 3072,
+              "size_m": 16,
+              "size_n": 3584,
+              "undersized_risk_pr36889": false
+            }
+          },
+          "sms": 108,
+          "sorted_len": 6288,
+          "sorted_len_is_estimate": true
+        },
+        "m32": {
+          "basis": "ops.cu@d223c900 L708-717/L852-862 미러; PR#36889(미병합)는 arm1 제거",
+          "block_size_m": 8,
+          "constants": {
+            "max_par": 16,
+            "max_thread_n": 256,
+            "min_thread_n": 64
+          },
+          "gemms": {
+            "gemm1_w13": {
+              "arm1_sizen_x_sortedlen": 41680896,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 96,
+              "size_k": 3584,
+              "size_m": 32,
+              "size_n": 6144,
+              "undersized_risk_pr36889": false
+            },
+            "gemm2_w2": {
+              "arm1_sizen_x_sortedlen": 24313856,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 56,
+              "size_k": 3072,
+              "size_m": 512,
+              "size_n": 3584,
+              "undersized_risk_pr36889": false
+            }
+          },
+          "sms": 108,
+          "sorted_len": 6784,
+          "sorted_len_is_estimate": true
+        },
+        "m8": {
+          "basis": "ops.cu@d223c900 L708-717/L852-862 미러; PR#36889(미병합)는 arm1 제거",
+          "block_size_m": 8,
+          "constants": {
+            "max_par": 16,
+            "max_thread_n": 256,
+            "min_thread_n": 64
+          },
+          "gemms": {
+            "gemm1_w13": {
+              "arm1_sizen_x_sortedlen": 39321600,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 96,
+              "size_k": 3584,
+              "size_m": 8,
+              "size_n": 6144,
+              "undersized_risk_pr36889": false
+            },
+            "gemm2_w2": {
+              "arm1_sizen_x_sortedlen": 22937600,
+              "arm2_sms4_bs_maxthreadn": 884736,
+              "c_tmp_bytes_fp32": 7077888,
+              "c_tmp_elems": 1769472,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 56,
+              "size_k": 3072,
+              "size_m": 128,
+              "size_n": 3584,
+              "undersized_risk_pr36889": false
+            }
+          },
+          "sms": 108,
+          "sorted_len": 6400,
+          "sorted_len_is_estimate": true
+        },
+        "m8192_prefill": {
+          "basis": "ops.cu@d223c900 L708-717/L852-862 미러; PR#36889(미병합)는 arm1 제거",
+          "block_size_m": 64,
+          "constants": {
+            "max_par": 16,
+            "max_thread_n": 256,
+            "min_thread_n": 64
+          },
+          "gemms": {
+            "gemm1_w13": {
+              "arm1_sizen_x_sortedlen": 1152122880,
+              "arm2_sms4_bs_maxthreadn": 7077888,
+              "c_tmp_bytes_fp32": 28311552,
+              "c_tmp_elems": 7077888,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 96,
+              "size_k": 3584,
+              "size_m": 8192,
+              "size_n": 6144,
+              "undersized_risk_pr36889": false
+            },
+            "gemm2_w2": {
+              "arm1_sizen_x_sortedlen": 672071680,
+              "arm2_sms4_bs_maxthreadn": 7077888,
+              "c_tmp_bytes_fp32": 28311552,
+              "c_tmp_elems": 7077888,
+              "governed_by": "arm2(sms캡)",
+              "min_workspace": 432,
+              "n_tiles": 56,
+              "size_k": 3072,
+              "size_m": 131072,
+              "size_n": 3584,
+              "undersized_risk_pr36889": false
+            }
+          },
+          "sms": 108,
+          "sorted_len": 187520,
+          "sorted_len_is_estimate": true
+        }
+      },
+      "mini_reference": {
+        "elems": 24,
+        "perturbed_detected": true,
+        "selfconsistency_passed": true
+      }
+    },
+    "upstream": {
+      "call_pattern": "tests/kernels/moe/test_moe.py@d223c900 L982-1007",
+      "fix_candidate": "PR#36889 미병합 — c_tmp batch의존 min()항 제거 + sh_cache_size 런치 + cudaFuncSetAttribute 덮어쓰기 수정",
+      "issue": "vllm-project/vllm#35922 (stale-close, 미수정)",
+      "kernel_src": "csrc/libtorch_stable/moe/marlin_moe_wna16/ops.cu@d223c900 L708-717(c_tmp) L852-862(workspace)",
+      "s3_reuse": "이 하네스의 4게이트 all-PASS 가 S3 수정 완료의 회귀 기준선"
+    }
+  },
+  "gates": {
+    "NUMERIC": {
+      "evidence": {
+        "mini": {
+          "elems": 24,
+          "perturbed_detected": true,
+          "selfconsistency_passed": true
+        }
+      },
+      "reason": "cpu-dry-run — 순수 python 참조 자기검증 green, 실커널 비교 없음",
+      "status": "SKIP"
+    },
+    "PERF": {
+      "evidence": {},
+      "reason": "cpu-dry-run — 측정 없음",
+      "status": "SKIP"
+    },
+    "SANITIZER": {
+      "evidence": {},
+      "reason": "cpu-dry-run — GPU 미실행",
+      "status": "SKIP"
+    },
+    "SHAPES": {
+      "evidence": {
+        "required": [
+          "m1",
+          "m8",
+          "m32",
+          "m8192_prefill"
+        ],
+        "validated": [
+          "L1_e8_k512",
+          "L2_e64_k1024",
+          "L3_e256_k3584",
+          "L4_e896_k512",
+          "m1",
+          "m8",
+          "m32",
+          "m8192_prefill",
+          "L6_e896_k7168"
+        ]
+      },
+      "reason": "cpu-dry-run — 케이스 정의 9건 검증만(필수 4 포함), 실행 커버 아님",
+      "status": "SKIP"
+    }
+  },
+  "id": "k05_marlin_moe_w4a16",
+  "meta": {
+    "created_utc": "2026-07-28T08:57:10+00:00",
+    "dry_run": true,
+    "duration_s": 0.048,
+    "pins": {
+      "hf": "moonshotai/Kimi-K3@9f62e4e9",
+      "vllm_kimi_k3": "0498dc7e",
+      "vllm_main": "d223c900"
+    }
+  },
+  "overall": "INCOMPLETE",
+  "schema_version": "s2-kernel-report/v1"
+}

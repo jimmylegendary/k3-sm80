@@ -62,8 +62,8 @@ bash run_all.sh --cpu-dry-run                     # (호스트용) 참조·판�
 | k02 KDA recurrent | 2–4분 | +3–8분 | state 6.29MB/seq 스트림 — 빠름 |
 | k03 causal_conv1d | 1–2분 | +2–5분 | |
 | k04 MLA decode | 3–6분 | +5–10분 | ctx 128k KV(b32 기준 ~4.8GB) 할당 포함 |
-| k05 Marlin MoE | 3–8분 | +10–30분 | **crash 예상 경로** — sanitizer가 느리고 출력이 큼. hang ≠ 실패, 기다릴 것 |
-| k06 dequant bench | 1–2분 | (해당 없음) | 측정 산출형 — CV≤10%면 PASS |
+| k05 Marlin MoE | 20–50분 | +30–120분 | **crash 예상 경로**. 케이스=독립 프로세스(사다리 E 8→64→256→896, K 512→3584→7168) — 한 crash가 전체를 안 죽임. 시간은 E=896 가중치 생성·양자화가 지배(케이스당 수 분). sanitizer는 가중치 빌드까지 계측되어 매우 느림 — hang ≠ 실패, 기다릴 것 |
+| k06 dequant bench | 3–6분 | +1–3분 (소형 arm) | 측정 산출형 — CV≤10%면 PASS. `calibration-k06-dequant.json`(dequant_ops/param)이 phase0 재보정 입력 |
 | k07 SiTU 참조 | 1분 | +1–2분 | PERF는 기본 SKIP(성능 후순위) |
 
 전체 첫 실행 대략 30–60분(autotune 포함), 재실행 ~15분.
