@@ -1,7 +1,7 @@
 {
  "date": "2026-07-28",
  "gate": {
-  "criterion": "단일 스트림(배치1, ctx 8k) ≥ 5 tok/s (대화형 최소선); FAIL 기준: 낙관에서도 < 3 tok/s",
+  "criterion": "단일 스트림(배치1, ctx 8k) decode ≥ 5 tok/s (대화형 최소선의 decode 축 — TTFT/prefill은 미모델, REPORT §10); FAIL 기준: 낙관에서도 < 3 tok/s",
   "verdict": "PASS"
  },
  "best_real": {
@@ -17,11 +17,21 @@
   "tok_s_system": 87.31608789350975
  },
  "best_throughput_real_b32": {
-  "strategy": "EP32",
-  "step_ms": 55.55966327888729,
-  "tok_s_user": 17.998669196038858,
-  "tok_s_system": 575.9574142732434
+  "strategy": "TP8PP4",
+  "step_ms": 87.33313517762471,
+  "tok_s_user": 11.450407659889052,
+  "tok_s_system_sync": 366.41304511644967,
+  "tok_s_system_pipelined": 798.5980515598529,
+  "pp_microbatch": 8,
+  "pp_stage_ms": 10.01755511971772,
+  "basis": "PP 마이크로배치 파이프라인 정상상태(P1) 기준 선정 — 동기 직렬 지표는 PP in-flight 배치를 0으로 치는 인공물(REPORT 발견 1)"
  },
+ "caveats": [
+  "배치>1 결과는 max_num_seqs>1 성립 전제([미확인] — KDA state 다중 seq 배칭, REPORT §10; Phase 1 프로브 필요)",
+  "PP 파이프라인은 정상상태 상한(램프업/드레인 버블 미모델)",
+  "dequant_ops_per_param은 무근거 밴드 — 발견 2(ALU-bound)는 dq=4 조건부",
+  "노드 간 a2a α per-peer 구조는 [파생](실측 아님) — Phase 1 a2a 마이크로벤치로 재고정"
+ ],
  "flat_parallel_floor_ms": 2.0990582393330066,
  "pins": {
   "hf": "moonshotai/Kimi-K3@9f62e4e9",

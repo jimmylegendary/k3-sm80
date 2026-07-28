@@ -10,9 +10,10 @@
 (REPORT/verdict의 모든 수치는 이 스크립트 실행 결과에서 생성 — 손수치 금지)
 
 모델 구성 원칙:
-  * 커널(GEMM/GEMV/attention/recurrent/elementwise)은 hatir cost API로 코스팅
-    (kernels.build("linear")/einsum.tile + roofline_us; 트윈 = twin_a100_x32.json의
-    hbm 서브트리 → LevelStack).
+  * 커널(GEMM/GEMV/attention/recurrent/elementwise)은 hatir `einsum.tile`로 직접
+    저작한 플랜 + 명시 루프라인 max(플랜 compute_us, 명시 mem_bytes/HBM_BW)로 코스팅
+    (트윈 = twin_a100_x32.json의 hbm 서브트리 → LevelStack). hatir 기본
+    kernels/_gemm_plan·roofline_us는 사용하지 않음(사유는 lin_us docstring).
   * 통신(TP all-reduce, EP all-to-all, PP p2p, logits all-gather)은 hatir
     collectives(hierarchical_collective + FabricLevel)로 코스팅. α(소메시지 지연)는
     트윈 meta.comm_scenarios(보수 real/낙관 opt)에서 주입.
@@ -20,15 +21,24 @@
       (E1) 커널 런치/그래프 갭: kernels_per_layer × launch_gap + 그래프 분절 ×
            graph_segment (comm 경계마다 piecewise CUDA graph가 끊김)
       (E2) W4/MXFP4 dequant ALU 비용: params × dequant_ops / alu_ops_per_s 와의 max
+           — dequant_ops_per_param은 [무근거 밴드] (트윈 _dequant_ops_note; Phase 1
+           마이크로벤치 필수)
       (E3) MoE 라우팅 불균형: EP expert 커널 시간 × moe_imbalance
       (E4) per-operand 혼합 dtype: 양자화 GEMM은 dtype_bytes=B/param(<2)로 가중치
            바이트를 정확히 맞추고, 활성값 바이트 과소분(<0.1%)은 무시(주석 명기)
       (E5) vLLM 스텝 CPU/스케줄러 오버헤드: step_cpu_us 가산
-      (E6) EP dispatch 랭크-중복제거(DeepEP식): 토큰당 전송 랭크 수 =
-           e×(1−(1−1/e)^topk)
+      (E6) EP dispatch 전송 복사본 수: opt = DeepEP식 랭크-중복제거
+           e×(1−(1−1/e)^topk) — 단 DeepEP는 SM90 전용이므로 SM80 커스텀 커널 전제.
+           real = naive per-(token,expert) 복사(=topk) — vLLM SM80 기본 경로
+           (recon/vllm-upstream.md에 SM80용 EP a2a 백엔드 근거 없음).
       (E7) MoE expert grouped-GEMV: per-operand dtype(가중치 4bit·활성 bf16)과
            유니크-expert 재사용이 hatir Op 1개로 표현 불가 → max(HBM, TC, dequant)
            명시 모델
+      (E8) 노드 간 a2a α의 per-peer 구조: α_eff = α_base + α_per_peer × (노드 밖
+           peer 수) — recon/a100-comms.md §3 (per-peer 소메시지 구조) 반영
+      (P1) PP 마이크로배치 파이프라인 정상상태 처리량: 상주 배치 G를 p개 마이크로
+           배치로 나눠 in-flight 유지 시 시스템 처리량 = G/p 토큰 / 최악 스테이지
+           시간 (vLLM PP 다중 in-flight 배치; tok_s_system(동기 직렬)과 별도 산출)
 
 모델 수치 출처(핀): recon/k3-config.md (HF moonshotai/Kimi-K3 @ 9f62e4e9), recon/
 a100-comms.md, recon/vllm-upstream.md (vLLM main d223c900 / kimi-k3 0498dc7e),
@@ -49,7 +59,6 @@ sys.path.insert(0, "/home/jimmy/repos/hat-schema")
 
 from hat_schema.validate import validate_twin           # noqa: E402
 from hatir.hw import linearize                          # noqa: E402
-from hatir.kernels import roofline_us                   # noqa: E402
 from hatir.einsum import tile                           # noqa: E402
 from hatir.collectives import FabricLevel, hierarchical_collective  # noqa: E402
 
@@ -137,6 +146,9 @@ ALU_RATE = float(TWIN["meta"]["gpu_extra"]["alu_int32_ops_per_s"])
 SCEN_RAW = TWIN["meta"]["comm_scenarios"]
 
 
+NNODES = 4                  # 32 GPU = 4노드 × 8 (트윈 meta.cluster)
+
+
 @dataclass(frozen=True)
 class Scen:
     name: str
@@ -147,6 +159,8 @@ class Scen:
     ar_a_inter: float
     a2a_a_intra: float
     a2a_a_inter: float
+    a2a_a_inter_pp: float    # EXPLICIT(E8): 노드 간 a2a per-peer α (트윈 _a2a_alpha_note)
+    a2a_dedup: bool          # EXPLICIT(E6): 랭크-중복제거(DeepEP식) 여부 — opt만 true
     p2p_a: float
     launch_gap: float
     graph_seg: float
@@ -161,7 +175,8 @@ def mk_scen(name):
     s = SCEN_RAW[name]
     return Scen(name, s["nvlink_busbw_bps"], s["ib_node_injection_bps"], s["ib_busbw_bps"],
                 s["ar_alpha_intra_us"], s["ar_alpha_inter_us"], s["a2a_alpha_intra_us"],
-                s["a2a_alpha_inter_us"], s["p2p_alpha_us"], s["launch_gap_us"],
+                s["a2a_alpha_inter_us"], s["a2a_alpha_inter_per_peer_us"],
+                bool(s["a2a_rank_dedup"]), s["p2p_alpha_us"], s["launch_gap_us"],
                 s["graph_segment_us"], s["step_cpu_us"], s["dequant_ops_per_param"],
                 s["moe_imbalance"], int(s["dispatch_payload_bytes"]), int(s["pp_hidden_streams"]))
 
@@ -175,8 +190,10 @@ class RQ:
     orig  = 체크포인트 그대로 (bf16 잔여 + MXFP4 expert; MXFP4는 SM80 HW 미지원이라
             dequant ops가 큼 — #35922 커널 가족의 에뮬레이션 경로).
     w4a16 = Phase 3 전량 INT4 g128 (router/lm_head/embed/norm bf16 유지). Marlin이
-            A100에서 소배치 근사-메모리바운드 실측(Marlin 논문)이므로 dequant ops를
-            절반으로(EXPLICIT E2 보정)."""
+            FP16×INT4 소배치 근사-메모리바운드 실증(MARLIN, arXiv:2408.11743,
+            PPoPP 2025 — INT4 근거이며 MXFP4 직접 근거 아님)이므로 dequant ops를
+            절반으로(EXPLICIT E2 보정). dq_ops 자체는 [무근거 밴드] — 트윈
+            _dequant_ops_note + Phase 1 마이크로벤치 필수."""
     name: str
     wb: float        # 비-expert linear 가중치 B/param
     dq_lin: float    # 비-expert linear dequant ops/param (wb<2일 때만 유효)
@@ -323,7 +340,14 @@ def a2a_us(msg_per_gpu, e, sc: Scen, scope):
     if e < 2 or msg_per_gpu <= 0:
         return {"us": 0.0, "alpha": 0.0, "bw": 0.0}
     bw = sc.nvlink_busbw if scope == "intra" else (sc.ib_node / 8.0)  # GPU당 IB 몫
-    a = sc.a2a_a_intra if scope == "intra" else sc.a2a_a_inter
+    if scope == "intra":
+        a = sc.a2a_a_intra
+    else:
+        # EXPLICIT(E8): 노드 간 a2a는 per-peer 소메시지 구조(recon/a100-comms.md §3)
+        # → α_eff = α_base + α_per_peer × (노드 밖 peer rank 수). EP 그룹이 NNODES개
+        # 노드에 걸친다고 가정(본 스윕의 inter 전략 EP32/TP8EP4 모두 4노드 스팬).
+        inter_peers = e - max(1, e // NNODES)
+        a = sc.a2a_a_inter + sc.a2a_a_inter_pp * inter_peers
     r = hierarchical_collective(msg_per_gpu, _fab(e, bw, a, e - 1), "alltoall")
     return {"us": r["us"], "alpha": r["latency_us"], "bw": r["bw_us"]}
 
@@ -340,10 +364,16 @@ def uniq_experts(G):
     return N_EXPERTS * (1.0 - (1.0 - TOPK / N_EXPERTS) ** G)
 
 
-def sends_per_token(e):
-    """EXPLICIT(E6): DeepEP식 랭크-중복제거 — 토큰당 실제 전송 대상 rank 수 기대값."""
+def sends_per_token(e, sc: Scen):
+    """EXPLICIT(E6): 토큰당 a2a 전송 복사본 수.
+    opt(dedup=true) = DeepEP식 랭크-중복제거 기대값 e×(1−(1−1/e)^topk) — DeepEP는
+    SM90 전용(트윈 provenance.deepep_requirements)이라 SM80 커스텀 커널 전제의 상한.
+    real(dedup=false) = naive per-(token,expert) 복사 = topk — vLLM SM80 naive 경로
+    (recon/vllm-upstream.md에 SM80 EP a2a 전용 백엔드 근거 없음)."""
     if e <= 1:
         return 0.0
+    if not sc.a2a_dedup:
+        return float(TOPK)
     return e * (1.0 - (1.0 - 1.0 / e) ** TOPK)
 
 
@@ -434,7 +464,7 @@ def ffn_moe(acc: Acc, st: Strat, G, b, sc: Scen, rq: RQ):
         ev += 1
     if e > 1:                                                     # EP dispatch a2a
         n_stage_gpus = 32 // st.p
-        msg = G * sends_per_token(e) * LATENT * sc.disp_payload / n_stage_gpus
+        msg = G * sends_per_token(e, sc) * LATENT * sc.disp_payload / n_stage_gpus
         c = a2a_us(msg, e, sc, st.a2a_scope)
         acc.comm(c)
         ev += 1
@@ -451,7 +481,7 @@ def ffn_moe(acc: Acc, st: Strat, G, b, sc: Scen, rq: RQ):
     acc.kern(us * imb, bound, by)
     if e > 1:                                                     # EP combine a2a
         n_stage_gpus = 32 // st.p
-        msg = G * sends_per_token(e) * LATENT * 2 / n_stage_gpus  # combine은 bf16
+        msg = G * sends_per_token(e, sc) * LATENT * 2 / n_stage_gpus  # combine은 bf16
         c = a2a_us(msg, e, sc, st.a2a_scope)
         acc.comm(c)
         ev += 1
@@ -508,12 +538,10 @@ def stage_slices(p):
 
 
 # ---------------------------------------------------------------- 스텝 시간
-def step_time(st: Strat, G, sc: Scen, requant: str, S_ctx: int):
-    """디코드 1스텝의 최악-경로(스테이지 직렬 합) 시간 + 분해. 반환 µs."""
-    rq = mk_rq(requant, sc)
-    b = max(1, math.ceil(G / st.dp))
-    acc = Acc()
-    for (attn, ffn) in LAYERS:
+def _accum_layers(acc: Acc, st: Strat, G, b, sc: Scen, rq: RQ, S_ctx: int, layers):
+    """`layers`(LAYERS 부분열)의 커널+통신+런치를 acc에 누적. G = 이 패스가 처리하는
+    글로벌 토큰 수(MoE uniq/dispatch 통계의 입력), b = 어텐션 DP replica당 배치."""
+    for (attn, ffn) in layers:
         ev = 0
         if attn == "kda":
             ev += attn_kda(acc, st, b, sc, rq)
@@ -526,20 +554,72 @@ def step_time(st: Strat, G, sc: Scen, requant: str, S_ctx: int):
         # EXPLICIT(E1): 커널 런치/그래프 갭 — comm 경계 수(ev)만큼 그래프 분절
         nk = KERNELS[attn][sc.name] + KERNELS[ffn][sc.name]
         acc.launch += nk * sc.launch_gap + ev * sc.graph_seg
+
+
+def _tail(acc: Acc, st: Strat, b, sc: Scen):
+    """스텝 공통 마무리(마지막 stage 소속): final norm, lm_head, logits AG, sampling."""
+    acc.kern(*ew_us(b * H * 2, 2, 1.0))
+    acc.kern(*lin_us(b, H, VOCAB // st.ta, 2.0, 0.0))             # lm_head bf16 유지
+    acc.comm(ag_us(b * (VOCAB // st.ta) * 2, st.ta, sc, "intra"))
+    acc.kern(*ew_us(b * VOCAB // 8, 2, 1.0))                      # top-p/sampling 축약
+    acc.launch += KERNELS["misc"][sc.name] * sc.launch_gap
+
+
+def step_time(st: Strat, G, sc: Scen, requant: str, S_ctx: int):
+    """디코드 1스텝의 최악-경로(스테이지 직렬 합) 시간 + 분해. 반환 Acc(µs).
+
+    주의(지표 정의): 이 직렬 합은 배치 1개가 93층 전체를 통과하는 시간 = 사용자 지연
+    (tok_s_user)의 근거. PP 전략의 시스템 처리량에는 그대로 쓰면 안 됨 — vLLM PP는
+    p개 마이크로배치를 in-flight로 유지하므로 정상상태 처리량은 최악 스테이지 시간이
+    결정(pipelined_throughput, EXPLICIT P1)."""
+    rq = mk_rq(requant, sc)
+    b = max(1, math.ceil(G / st.dp))
+    acc = Acc()
+    _accum_layers(acc, st, G, b, sc, rq, S_ctx, LAYERS)
     # PP 경계: (p-1)회 hidden p2p + 토큰 id 반환 1회
     if st.p > 1:
         hb = b * H * 2 * sc.pp_streams   # AttnRes 스트림 [미확인] → real은 2×hidden
         for _ in range(st.p - 1):
             acc.comm(p2p_us(hb, sc))
         acc.comm(p2p_us(64, sc))
-    # 스텝 공통: embed(무시), final norm, lm_head, logits AG, sampling
-    acc.kern(*ew_us(b * H * 2, 2, 1.0))
-    acc.kern(*lin_us(b, H, VOCAB // st.ta, 2.0, 0.0))             # lm_head bf16 유지
-    acc.comm(ag_us(b * (VOCAB // st.ta) * 2, st.ta, sc, "intra"))
-    acc.kern(*ew_us(b * VOCAB // 8, 2, 1.0))                      # top-p/sampling 축약
-    acc.launch += KERNELS["misc"][sc.name] * sc.launch_gap
+    # 스텝 공통: embed(무시) + tail
+    _tail(acc, st, b, sc)
     acc.cpu += sc.step_cpu                                        # EXPLICIT(E5)
     return acc
+
+
+def pipelined_throughput(st: Strat, G, sc: Scen, requant: str, S_ctx: int):
+    """EXPLICIT(P1): PP 마이크로배치 파이프라인 정상상태 시스템 처리량.
+
+    상주 배치 G를 p개 마이크로배치(G_mb = G/p)로 나눠 p개를 in-flight로 유지하면
+    (vLLM PP의 다중 in-flight 배치), 정상상태 처리량 = G_mb 토큰 / 최악 스테이지
+    시간. 스테이지 시간은 해당 stage 층들의 커널·통신·런치(G=G_mb 기준: 가중치는
+    마이크로배치마다 재스트림, uniq expert도 G_mb 기준 — 파이프라이닝의 가중치 재사용
+    손실을 그대로 반영) + PP 경계 송신 + (마지막 stage) tail + 마이크로배치당 CPU.
+    비모델(한계): 램프업/드레인 버블, vLLM PP 스케줄러 실동작. 스테이지 간 패브릭은
+    본 스윕 전략에서 분리(stage=노드 단위)라 무경합 가정 유지. p==1이거나 G<p(파이프
+    라인을 못 채움)면 직렬 값과 동일. 전제: 상주 G seq 동시 유지 = max_num_seqs>1
+    성립 [미확인 — REPORT §10].
+    반환: {"tok_s", "stage_ms"(최악), "microbatch"}"""
+    if st.p == 1 or G < st.p:
+        acc = step_time(st, G, sc, requant, S_ctx)
+        return {"tok_s": G * 1e6 / acc.total, "stage_ms": None, "microbatch": None}
+    rq = mk_rq(requant, sc)
+    G_mb = G // st.p
+    b = max(1, math.ceil(G_mb / st.dp))
+    stage_us = []
+    for si, (a, z) in enumerate(stage_slices(st.p)):
+        acc = Acc()
+        _accum_layers(acc, st, G_mb, b, sc, rq, S_ctx, LAYERS[a:z])
+        if si < st.p - 1:
+            acc.comm(p2p_us(b * H * 2 * sc.pp_streams, sc))       # 다음 stage 송신
+        else:
+            acc.comm(p2p_us(64, sc))                              # 토큰 id 반환
+            _tail(acc, st, b, sc)
+        acc.cpu += sc.step_cpu    # 마이크로배치·stage당 스케줄러 오버헤드(보수)
+        stage_us.append(acc.total)
+    t = max(stage_us)
+    return {"tok_s": G_mb * 1e6 / t, "stage_ms": t / 1e3, "microbatch": G_mb}
 
 
 # ---------------------------------------------------------------- 메모리 산정
@@ -613,11 +693,15 @@ def run():
                 for G in batches:
                     acc = step_time(st, G, sc, rq, S_ctx)
                     ms = acc.total / 1e3
+                    pipe = pipelined_throughput(st, G, sc, rq, S_ctx)
                     results.append({
                         "strategy": st.name, "requant": rq, "scenario": sc_name,
                         "batch": G, "ctx": S_ctx,
                         "step_ms": ms, "tok_s_user": 1e3 / ms,
                         "tok_s_system": G * 1e3 / ms,
+                        "tok_s_system_pipelined": pipe["tok_s"],
+                        "pp_stage_ms": pipe["stage_ms"],
+                        "pp_microbatch": pipe["microbatch"],
                         "breakdown": acc.as_dict(),
                         "mem": {k: memr[k] for k in
                                 ("worst_weights_gb", "per_seq_8k_mb", "per_seq_256k_gb",
@@ -667,8 +751,12 @@ def fmt_row(r):
                   ("launch", bd["launch_us"]), ("cpu", bd["cpu_us"])],
                  key=lambda x: -x[1])
     t2 = " + ".join(f"{n} {v/1e3:.1f}ms" for n, v in top[:2])
+    if r["pp_microbatch"]:
+        pipe = f"{r['tok_s_system_pipelined']:.0f} (µb{r['pp_microbatch']}·stage {r['pp_stage_ms']:.1f}ms)"
+    else:
+        pipe = f"{r['tok_s_system_pipelined']:.0f}"
     return (f"| {r['strategy']} | {r['batch']} | {r['step_ms']:.1f} | "
-            f"{r['tok_s_user']:.1f} | {r['tok_s_system']:.0f} | {t2} |")
+            f"{r['tok_s_user']:.1f} | {r['tok_s_system']:.0f} | {pipe} | {t2} |")
 
 
 def git_rev(path):
@@ -696,7 +784,8 @@ def make_report(results, ctx_sweep, verdict, b_real, b_opt, anchor):
     A("")
     A("## 0. 판정 (게이트)")
     A("")
-    A(f"**{verdict}** — 기준: 단일 스트림(배치 1) ≥ 5 tok/s가 대화형 최소선.")
+    A(f"**{verdict}** — 기준: 단일 스트림(배치 1) decode ≥ 5 tok/s (대화형 최소선의 decode 축; "
+      "TTFT/prefill은 미모델 — §10).")
     A("")
     A(f"- 현실(보수) 시나리오 최선: **{b_real['strategy']}** = "
       f"**{b_real['tok_s_user']:.1f} tok/s** (스텝 {b_real['step_ms']:.1f}ms, ctx 8k)")
@@ -715,24 +804,44 @@ def make_report(results, ctx_sweep, verdict, b_real, b_opt, anchor):
 
     thr_real = max((r for r in results if r["scenario"] == "real" and r["batch"] == 32
                     and r["requant"] == "orig" and r["mem"]["fits"]),
-                   key=lambda r: r["tok_s_system"])
+                   key=lambda r: r["tok_s_system_pipelined"])
+    thr_real_sync = max((r for r in results if r["scenario"] == "real" and r["batch"] == 32
+                         and r["requant"] == "orig" and r["mem"]["fits"]),
+                        key=lambda r: r["tok_s_system"])
     tp8_32 = _get("TP8PP4", 32, "real")
     dq_share = tp8_32["breakdown"]["compute_us"] / (tp8_32["step_ms"] * 1e3) * 100
     w4_best = max((r for r in results if r["scenario"] == "real" and r["batch"] == 1
                    and r["requant"] == "w4a16" and r["mem"]["fits"]),
                   key=lambda r: r["tok_s_user"])
-    A(f"1. **레짐 이원화**: 단일 스트림(대화 지연)은 α-이벤트 최소인 **{b_real['strategy']}**가, "
-      f"시스템 처리량(배치 32)은 expert 스트리밍을 32-way로 푸는 **{thr_real['strategy']}**"
-      f"({thr_real['tok_s_system']:.0f} tok/s)가 승자 — 운영 모드에 따라 배치 전략이 갈린다.")
-    A(f"2. **원본 MXFP4의 dequant ALU 세금**: SM80은 FP4 HW가 없어(#35922 커널 가족의 "
-      f"에뮬레이션 경로) 배치 32에서 TP-샤딩 전략의 compute 비중이 {dq_share:.0f}%까지 상승 "
-      f"(TP8PP4/real). EP 분산(expert/rank↓) 또는 W4A16 재양자화가 이를 완화.")
+    if thr_real["pp_microbatch"]:
+        _p = next(s.p for s in STRATS if s.name == thr_real["strategy"])
+        thr_detail = (f"µb{thr_real['pp_microbatch']}×{_p} in-flight, "
+                      f"최악 stage {thr_real['pp_stage_ms']:.1f}ms")
+    else:
+        thr_detail = "무-PP(파이프라인 불필요)"
+    A(f"1. **처리량 승자는 PP 파이프라인 정상상태 기준 {thr_real['strategy']}**: 배치 32(상주), "
+      f"현실 시나리오에서 PP 마이크로배치 파이프라이닝(P1) 반영 시 **{thr_real['strategy']} = "
+      f"{thr_real['tok_s_system_pipelined']:.0f} tok/s** ({thr_detail}). 동기 단일배치(비-파이프라인) "
+      f"기준으로는 {thr_real_sync['strategy']}({thr_real_sync['tok_s_system']:.0f} tok/s)가 앞서 "
+      f"보이지만 이는 vLLM PP의 다중 in-flight 배치를 0으로 치는 지표 정의 인공물이다. 단일 "
+      f"스트림(대화 지연)은 α-이벤트 최소인 **{b_real['strategy']}**가 승자. ⚠ 배치>1 결과 "
+      f"전체가 `max_num_seqs`>1 성립을 전제([미확인] — §10).")
+    A(f"2. **원본 MXFP4의 dequant ALU 세금 (dq_ops=4 가정 시)**: SM80은 FP4 HW가 없어(#35922 "
+      f"커널 가족의 에뮬레이션 경로) 배치 32에서 TP-샤딩 전략의 compute 비중이 {dq_share:.0f}%까지 "
+      f"상승 (TP8PP4/real). 단 이 결론은 dequant_ops_per_param(real 4.0/opt 2.0)의 함수이며 이 "
+      f"값은 [무근거 밴드](실측·1차 출처 없음 — 트윈 _dequant_ops_note): dq=2면 같은 항이 "
+      f"메모리바운드로 반전된다. Phase 1 dequant 마이크로벤치로 확정 전까지 조건부. EP 분산"
+      f"(expert/rank↓) 또는 W4A16 재양자화가 완화 방향인 것은 dq 값과 무관하게 성립.")
     A(f"3. **Phase 3(W4A16) 가치 정량화**: bf16 잔여 111GB/tok이 지배 병목 — 전량 W4A16이면 "
       f"현실 시나리오 단일 스트림 {b_real['tok_s_user']:.1f} → {w4_best['tok_s_user']:.1f} tok/s "
       f"({w4_best['tok_s_user']/b_real['tok_s_user']:.2f}×). '조건부'가 아니라 사실상 필수 격상 "
       f"근거(recon/k3-config.md §6과 합치).")
-    A("4. **PP의 디코드 세금**: PP는 스테이지 직렬화로 가중치 스트리밍 병렬도를 32→8-way로 "
-      "떨어뜨림 — 배치가 커질수록 EP(무-PP) 계열이 역전하는 구조적 이유.")
+    A("4. **EP의 실제 세금은 노드 간 a2a α 구조**: naive 경로(real)에서 노드 간 a2a α는 "
+      "per-peer 항이 지배(E8: EP32 = 44+6×24 = 188µs/collective, ×2회/MoE층) — EP32/TP8EP4의 "
+      "처리량이 종전 산출 대비 하락하고, DeepEP류 dedup+MXFP8 payload는 SM90 전용 라이브러리라 "
+      "SM80에서는 커스텀 커널 신규작성 없이는 못 쓴다(opt 시나리오 전용 가정). PP의 '가중치 "
+      "스트리밍 8-way 직렬화' 세금은 동기 지표의 인공물이었고, 파이프라인 정상상태에서는 "
+      "PP가 처리량도 이긴다(발견 1).")
     A("")
     A("## 1. 고정 핀 (재현성)")
     A("")
@@ -747,18 +856,30 @@ def make_report(results, ctx_sweep, verdict, b_real, b_opt, anchor):
     A("")
     A("## 3. 방법")
     A("")
-    A("- 커널: hatir `einsum.tile`로 직접 저작한 플랜(+`roofline_us`) — 디코드 GEMV는 "
+    A("- 커널: hatir `einsum.tile`로 직접 저작한 플랜 + 명시 루프라인 "
+      "max(플랜 compute_us, 명시 mem_bytes/HBM피크) — 디코드 GEMV는 "
       "가중치 1회 스트림·n-블록 108 SM 팬·split-k 매핑, MLA attention/KDA recurrent/"
-      "elementwise도 tile 플랜 (HBM→L2→SMEM→PE 서브스택, max(compute, HBM) 루프라인). "
-      "hatir 기본 `_gemm_plan`은 이 트윈(SM당 smem 164KB reuse tier)에서 spatial fan이 "
-      "클램프되어 디코드 compute를 10–20× 과대계상 → 직접 저작으로 대체(코드 주석).")
+      "elementwise도 tile 플랜 (HBM→L2→SMEM→PE 서브스택). "
+      "hatir 기본 `_gemm_plan`/`roofline_us`는 이 트윈(SM당 smem 164KB reuse tier)에서 "
+      "spatial fan이 클램프되어 디코드 compute를 10–20× 과대계상 → 미사용, 직접 저작으로 "
+      "대체(코드 주석).")
     A("- 통신: hatir `hierarchical_collective`(α-β, 무혼잡 이상치) — α/실효 busbw는 "
-      "트윈 `meta.comm_scenarios`의 보수(real)/낙관(opt) 2안 (recon/a100-comms.md 근거).")
-    A("- hatir가 표현 못 하는 항목은 명시 가산항(코드 EXPLICIT E1–E7): 런치/그래프 갭, "
-      "dequant ALU, MoE 불균형, 혼합 dtype, 스텝 CPU, dispatch 랭크-중복제거, "
-      "expert grouped-GEMV.")
+      "트윈 `meta.comm_scenarios`의 보수(real)/낙관(opt) 2안 (recon/a100-comms.md 근거). "
+      "노드 간 a2a α는 per-peer 구조(E8): α_eff = α_base + 6µs×(노드 밖 peer 수) — "
+      "EP32 real은 188µs/collective (naive NCCL a2a 밴드와 정합; 트윈 _a2a_alpha_note).")
+    A("- EP 전송 복사본(E6): real = naive per-(token,expert) 복사(topk=16) — vLLM SM80에 "
+      "전용 EP a2a 백엔드 근거 없음(recon/vllm-upstream.md); opt = DeepEP식 랭크-중복제거 + "
+      "MXFP8 payload — 단 DeepEP는 SM90 전용이라 SM80 커스텀 커널 신규작성 전제의 상한.")
+    A("- PP 처리량(P1): `tok/s/시스템`은 동기 단일배치(직렬 합 = 지연 근거) 기준이고, "
+      "`tok/s/시스템(PP파이프)`는 상주 배치를 p개 마이크로배치로 나눠 in-flight 유지하는 "
+      "vLLM PP 정상상태(최악 stage 시간 결정; 가중치 재스트림·uniq expert는 마이크로배치 "
+      "기준으로 반영, 램프업/드레인 버블 미모델) — PP 전략의 처리량 판정은 후자 사용.")
+    A("- hatir가 표현 못 하는 항목은 명시 가산항(코드 EXPLICIT E1–E8, P1): 런치/그래프 갭, "
+      "dequant ALU([무근거 밴드] — 발견 2), MoE 불균형, 혼합 dtype, 스텝 CPU, dispatch "
+      "복사본 수, expert grouped-GEMV, per-peer a2a α, PP 파이프라인 정상상태.")
     A("- 한계: 무혼잡·무겹침(통신-계산 오버랩 없음 = 보수), 균등 라우팅 기대값, "
-      "절대치는 탐색등급(순위/규모 판단용) — HATIR 검증 원칙(트렌드 정합)에 따름.")
+      "절대치는 탐색등급(순위/규모 판단용) — HATIR 검증 원칙(트렌드 정합)에 따름. "
+      "HBM은 datasheet 피크(2039GB/s) 무보정 — §10 minor 부채 참조.")
     A("")
     A("## 4. 전략 정의 (32 GPU = 4노드×8)")
     A("")
@@ -776,8 +897,8 @@ def make_report(results, ctx_sweep, verdict, b_real, b_opt, anchor):
         for sc in ("real", "opt"):
             A(f"### {'현실(보수)' if sc == 'real' else '낙관'} 시나리오 — ctx 8k")
             A("")
-            A("| 전략 | 배치 | 스텝 ms | tok/s/유저 | tok/s/시스템 | 지배 병목 top-2 |")
-            A("|---|---|---|---|---|---|")
+            A("| 전략 | 배치 | 스텝 ms | tok/s/유저 | tok/s/시스템(동기) | tok/s/시스템(PP파이프) | 지배 병목 top-2 |")
+            A("|---|---|---|---|---|---|---|")
             for r in results:
                 if r["requant"] == rq and r["scenario"] == sc:
                     A(fmt_row(r))
@@ -832,9 +953,26 @@ def make_report(results, ctx_sweep, verdict, b_real, b_opt, anchor):
     A("")
     A("## 10. 주요 가정/리스크")
     A("")
-    A("- 통신은 무혼잡 α-β(hatir collectives 계약) — EP32의 노드간 a2a는 실측에서 더 "
-      "나쁠 수 있음(보수 α 44µs 반영으로 1차 방어).")
-    A("- MoE 라우팅 균등 기대값 + 불균형 계수(real 1.5)로 근사 — 실측 라우팅 분포로 "
+    A("- **`max_num_seqs`>1 성립 [미확인]**: 배치 8/32의 모든 결과(파이프라인 포함)는 "
+      "hybrid KDA-state 다중 시퀀스 배칭 + DP 어텐션 + EP dispatch가 kimi-k3 브랜치/"
+      "SM80에서 실동작한다는 전제 위에 있다. recon/k3-config.md §8은 KDA state가 "
+      "`max_num_seqs`를 먼저 제약할 수 있다고 경고(스펙 '물리 타당성 우려'의 명시 항목). "
+      "배치 1 게이트 판정은 이 전제와 무관. → Phase 1 프로브에 `max_num_seqs>1` 동작 "
+      "확인(스케줄러/state 경로) 추가.")
+    A("- **PP 파이프라인 모델(P1)은 정상상태 상한**: 램프업/드레인 버블, vLLM PP 스케줄러 "
+      "실동작(마이크로배치 수·스케줄링 정책) 미모델. 스테이지 간 패브릭은 본 스윕 전략에서 "
+      "노드 단위로 분리라 무경합 가정 유지. KV 적재는 §7 기준 상주 32 seq 가능(TP8PP4 "
+      "max 321@8k).")
+    A("- **dequant_ops_per_param(real 4.0/opt 2.0)은 [무근거 밴드]** — 명령어 수준 유도만 "
+      "있고 실측·1차 출처 없음(트윈 _dequant_ops_note; Marlin arXiv:2408.11743은 INT4 "
+      "근거일 뿐). 발견 2(ALU-bound)는 dq=4 조건부. → Phase 1에 MXFP4 dequant "
+      "마이크로벤치 추가.")
+    A("- 통신은 무혼잡 α-β(hatir collectives 계약). 노드 간 a2a α는 per-peer 구조(E8, "
+      "[파생] — 실측 아님): per-peer 6µs는 NCCL Simple per-hop(arXiv:2507.04786 Table I) "
+      "기반 1차 근사 → Phase 1 a2a 마이크로벤치로 재고정. 노드 내 a2a α(20µs flat)는 "
+      "per-peer 미적용(잔여 낙관).")
+    A("- MoE 라우팅 균등 기대값 + 불균형 계수(real 1.5)로 근사 — expert 커널에만 적용, "
+      "a2a hot-rank 수신 편중에는 미적용(같은 방향의 잔여 낙관). 실측 라우팅 분포로 "
       "Phase 1에서 재보정.")
     A("- AttnRes 스트림의 PP 경계 폭([미확인], recon/k3-config.md §10) → real은 "
       "hidden 2배 전송 가정.")
@@ -842,6 +980,16 @@ def make_report(results, ctx_sweep, verdict, b_real, b_opt, anchor):
     A("- KDA state fp32(vLLM 하드코딩), FLA A100 수치검증은 Phase 1 프로브 (recon/kda-fla.md).")
     A("- Marlin/moe_wna16 커널이 #35922 수정 후 정상 동작한다는 전제(속도 게이트일 뿐 "
       "정합성 게이트 아님).")
+    A("- **게이트는 decode 한정**: TTFT/prefill(ctx 8k ≈ 1.7e15 FLOPs + KDA chunk 경로)은 "
+      "미모델 — '대화형' 체감은 TTFT에도 걸리므로 Phase 1에서 prefill 봉투 계산/실측 필요.")
+    A("- **알려진 minor 모델 부채(검증 렌즈 확인, 판정 불변 — phase0/VERIFICATION.md)**: "
+      "① HBM을 피크 2039GB/s 100%로 계상(실측 스트림 효율 ~85–90% 미반영, real 최선 "
+      "46.8→~44 tok/s 방향), ② lm_head logits AG scope가 `intra` 하드코딩(TP16PP2는 "
+      "inter여야 — 스텝당 ~0.04ms 과소), ③ logits AG에 per-rank shard 바이트 전달"
+      "(hatir 관례는 full buffer — bw 항 ~40µs 과소), ④ PP p2p bw 25GB/s 고정(real "
+      "2×HDR 공유 시 ~6.25GB/s — 스텝당 ~0.17ms 과소), ⑤ KDA conv state를 kernel 4탭 "
+      "전체로 계상(vLLM은 K_conv−1=3 저장, recon/kda-fla.md — state/seq ~1.33× 과대), "
+      "⑥ 미사용 상수 MLA_Q_LORA=576(실제 q_lora_rank=1536 하드코딩).")
     return "\n".join(L) + "\n"
 
 
@@ -852,7 +1000,7 @@ def main():
     verdict, b_real, b_opt = gate_verdict(results)
     thr_real = max((r for r in results if r["scenario"] == "real" and r["batch"] == 32
                     and r["requant"] == "orig" and r["mem"]["fits"]),
-                   key=lambda r: r["tok_s_system"])
+                   key=lambda r: r["tok_s_system_pipelined"])
 
     out = {"date": "2026-07-28", "ctx_default": 8192,
            "anchor": anchor, "validation": VALIDATION,
@@ -866,13 +1014,27 @@ def main():
 
     vj = {
         "date": "2026-07-28",
-        "gate": {"criterion": "단일 스트림(배치1, ctx 8k) ≥ 5 tok/s (대화형 최소선); "
+        "gate": {"criterion": "단일 스트림(배치1, ctx 8k) decode ≥ 5 tok/s (대화형 최소선의 "
+                              "decode 축 — TTFT/prefill은 미모델, REPORT §10); "
                               "FAIL 기준: 낙관에서도 < 3 tok/s",
                  "verdict": verdict},
         "best_real": {k: b_real[k] for k in ("strategy", "step_ms", "tok_s_user", "tok_s_system")},
         "best_opt": {k: b_opt[k] for k in ("strategy", "step_ms", "tok_s_user", "tok_s_system")},
-        "best_throughput_real_b32": {k: thr_real[k] for k in
-                                     ("strategy", "step_ms", "tok_s_user", "tok_s_system")},
+        "best_throughput_real_b32": {
+            **{k: thr_real[k] for k in ("strategy", "step_ms", "tok_s_user")},
+            "tok_s_system_sync": thr_real["tok_s_system"],
+            "tok_s_system_pipelined": thr_real["tok_s_system_pipelined"],
+            "pp_microbatch": thr_real["pp_microbatch"],
+            "pp_stage_ms": thr_real["pp_stage_ms"],
+            "basis": "PP 마이크로배치 파이프라인 정상상태(P1) 기준 선정 — 동기 직렬 지표는 "
+                     "PP in-flight 배치를 0으로 치는 인공물(REPORT 발견 1)"},
+        "caveats": [
+            "배치>1 결과는 max_num_seqs>1 성립 전제([미확인] — KDA state 다중 seq 배칭, "
+            "REPORT §10; Phase 1 프로브 필요)",
+            "PP 파이프라인은 정상상태 상한(램프업/드레인 버블 미모델)",
+            "dequant_ops_per_param은 무근거 밴드 — 발견 2(ALU-bound)는 dq=4 조건부",
+            "노드 간 a2a α per-peer 구조는 [파생](실측 아님) — Phase 1 a2a 마이크로벤치로 재고정",
+        ],
         "flat_parallel_floor_ms": anchor["flat_parallel_floor_ms"],
         "pins": {"hf": "moonshotai/Kimi-K3@9f62e4e9", "vllm_main": "d223c900",
                  "vllm_kimi_k3": "0498dc7e", "hatir": git_rev("/home/jimmy/repos/hatir"),
@@ -891,7 +1053,8 @@ def main():
     print("-" * 100)
     for rq in ("orig", "w4a16"):
         for sc in ("real", "opt"):
-            print(f"[{rq} / {sc}]  전략별 tok/s (유저@배치1 | 시스템@배치8 | 시스템@배치32)")
+            print(f"[{rq} / {sc}]  전략별 tok/s (유저@배치1 | 시스템@배치8 | 시스템@배치32 "
+                  f"동기→PP파이프)")
             for st in STRATS:
                 row = {}
                 for r in results:
@@ -899,10 +1062,13 @@ def main():
                         row[r["batch"]] = r
                 print(f"  {st.name:11s}: {row[1]['tok_s_user']:6.1f} | "
                       f"{row[8]['tok_s_system']:7.0f} | {row[32]['tok_s_system']:7.0f}"
+                      f" → {row[32]['tok_s_system_pipelined']:7.0f}"
                       f"   (step@1 {row[1]['step_ms']:6.1f}ms)")
             print()
     print(f"판정: {verdict}  — real 최선 {b_real['strategy']} {b_real['tok_s_user']:.1f} tok/s, "
-          f"opt 최선 {b_opt['strategy']} {b_opt['tok_s_user']:.1f} tok/s")
+          f"opt 최선 {b_opt['strategy']} {b_opt['tok_s_user']:.1f} tok/s; "
+          f"처리량(real b32, P1) {thr_real['strategy']} "
+          f"{thr_real['tok_s_system_pipelined']:.0f} tok/s")
     print("산출: results.json / REPORT.md / verdict.json")
 
 

@@ -137,7 +137,9 @@
    "l2_bytes": 41943040
   },
   "comm_scenarios": {
-   "_comment": "코스트 모델이 소비하는 통신/오버헤드 2안. real=보수(현실): NCCL 기본 + 2x HDR IB + piecewise CUDA graph. opt=낙관: custom/symmetric-memory allreduce + 8x HDR IB + full CUDA graph + MXFP8 dispatch payload. 근거는 recon/a100-comms.md 0절 표(각 값의 1차 출처 명시).",
+   "_comment": "코스트 모델이 소비하는 통신/오버헤드 2안. real=보수(현실): NCCL 기본 + 2x HDR IB + piecewise CUDA graph + naive EP a2a(per-(token,expert) 복사, 랭크-중복제거 없음). opt=낙관: custom/symmetric-memory allreduce + 8x HDR IB + full CUDA graph + DeepEP류 커스텀 a2a(랭크-중복제거 + MXFP8 payload) — 단 DeepEP 자체는 SM90 전용(README Requirements: 'Hopper (SM90) GPUs, or other architectures with SM90 PTX ISA support', https://github.com/deepseek-ai/DeepEP 2026-07-28 열람)이라 opt는 SM80용 동급 커스텀 커널 신규작성을 전제한 상한. 근거는 recon/a100-comms.md 0절 표(각 값의 1차 출처 명시).",
+   "_a2a_alpha_note": "노드 간 a2a α는 per-peer 구조 (recon/a100-comms.md §3: 'per-peer 소메시지로 쪼개져 α가 곱해지는 구조'). 모델 소비식: α_eff = a2a_alpha_inter_us + a2a_alpha_inter_per_peer_us × (노드 밖 peer rank 수). per-peer 6µs = NCCL Simple 프로토콜 per-hop 지연 (arXiv:2507.04786 Table I; 실측 아닌 [파생] — Phase 1 a2a 마이크로벤치로 재고정). EP32(4노드)면 α_eff = 44 + 6×24 = 188µs — naive NCCL a2a 밴드(~100-300µs)와 정합. opt는 PXN/커스텀 집약 가정으로 per-peer 0.",
+   "_dequant_ops_note": "dequant_ops_per_param은 [무근거 밴드 — 실측·1차 출처 없음]. 명령어 수준 유도(참고용): MXFP4(E2M1) 8개/32bit 워드 unpack ≈ LOP3/SHF 1-2 op/param + E8M0 스케일 곱 1 op/param + bf16 pack ≈ 총 2-4 ops/param. real=4.0(비융합 에뮬 상단), opt=2.0(Marlin류 융합 하단 — Marlin 논문 arXiv:2408.11743 (PPoPP 2025, Frantar et al.)은 FP16xINT4에서 소배치 근사-메모리바운드 실증이나 이는 INT4 근거이며 MXFP4 직접 근거 아님). 이 값이 배치32 TP-샤딩 전략의 ALU-bound 여부를 단독 결정 → Phase 1 dequant 마이크로벤치 필수.",
    "real": {
     "nvlink_busbw_bps": 200000000000.0,
     "ib_node_injection_bps": 50000000000.0,
@@ -146,6 +148,8 @@
     "ar_alpha_inter_us": 44.0,
     "a2a_alpha_intra_us": 20.0,
     "a2a_alpha_inter_us": 44.0,
+    "a2a_alpha_inter_per_peer_us": 6.0,
+    "a2a_rank_dedup": false,
     "p2p_alpha_us": 15.0,
     "launch_gap_us": 1.0,
     "graph_segment_us": 8.0,
@@ -163,6 +167,8 @@
     "ar_alpha_inter_us": 30.0,
     "a2a_alpha_intra_us": 5.0,
     "a2a_alpha_inter_us": 30.0,
+    "a2a_alpha_inter_per_peer_us": 0.0,
+    "a2a_rank_dedup": true,
     "p2p_alpha_us": 5.0,
     "launch_gap_us": 0.5,
     "graph_segment_us": 0.0,
@@ -184,6 +190,9 @@
    "nccl_protocol_alpha": "https://arxiv.org/abs/2507.04786 (Demystifying NCCL, Table I)",
    "cuda_graphs": "https://developer.nvidia.com/blog/cuda-graphs/",
    "dgx_a100_ib": "https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/nvidia-dgx-a100-datasheet.pdf",
+   "marlin_paper": "https://arxiv.org/abs/2408.11743 (MARLIN, PPoPP 2025 — FP16xINT4 실증; MXFP4 직접 근거 아님)",
+   "deepep_requirements": "https://github.com/deepseek-ai/DeepEP (README Requirements: Hopper SM90 전용 — 2026-07-28 열람; a2a 랭크-중복제거/MXFP8 payload는 opt 시나리오 전용 근거)",
+   "nccl_pxn": "https://developer.nvidia.com/blog/doubling-all2all-performance-with-nvidia-collective-communication-library-2-12/ (opt a2a per-peer α=0 집약 가정 근거)",
    "recon": "k3-sm80/recon/a100-comms.md (2026-07-28 스냅샷)"
   }
  }
