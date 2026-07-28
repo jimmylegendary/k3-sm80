@@ -20,8 +20,9 @@
   SHAPES    REQUIRED 5케이스 (update b 1/8/32 + fn 8k/varlen; 채널 3×12288, W=4;
             varlen 에 길이 2(<W-1) seq 포함 — 짧은 seq state 패딩 경로).
   SANITIZER compute-sanitizer memcheck (자체 --sanitizer-arm 축소 채널).
-  PERF      대표 케이스 upd_b32(packed update 1회) vs phase0 루프라인 (eff_floor 0.50 —
-            순수 스트림 커널; b1 은 launch-bound 라 대표성 없음, evidence 에만 기록).
+  PERF      사전등록 규칙(k04와 동일): roofline < 30µs 케이스는 launch 고정비 지배라
+            판정 제외. upd_b32 roofline(≈9.3µs) < 30µs 이므로 판정 대표 = fn_b1_T8k
+            (roofline ≈590µs, eff_floor 0.50). update 측정치는 항상 evidence 에 보존.
 
 실행: python3 harness.py --phase0-verdict <verdict.json> --report-dir <dir> [--cpu-dry-run]
 exit: 0 FAIL없음 / 1 FAIL / 2 GPU 사전조건 미충족 / 3 내부 오류
@@ -50,6 +51,8 @@ PROJ = shapes.KDA_PROJ                     # 12288 (q/k/v 각)
 DIM3 = 3 * PROJ                            # 36864 (packed decode)
 W = shapes.KDA_CONV_KERNEL                 # 4
 PERF_CASE = "upd_b32"
+PERF_FN_CASE = "fn_b1_T8k"                 # roofline ≈590µs — launch 고정비 무시 가능
+PERF_JUDGE_MIN_ROOFLINE_US = 30.0          # k04와 동일한 사전등록 제외 규칙
 N_STEPS = 4
 EXTRA_CASES = ("fn_then_update_carry",)
 
@@ -115,6 +118,7 @@ def gpu_run(r: report.KernelReport, a) -> None:
     covered: list[str] = []
     case_meta: dict = {}
     perf_stats = None
+    fn_perf_stats = None
 
     req = shapes.REQUIRED_SHAPES[KID]
     order = [PERF_CASE] + [c for c in req if c != PERF_CASE] + list(EXTRA_CASES)
@@ -132,7 +136,14 @@ def gpu_run(r: report.KernelReport, a) -> None:
                     perf_stats = timing.measure(perf_fn, warmup=a.warmup, reps=a.reps)
             else:
                 lengths = FN_B8_LENGTHS if req[name].get("varlen") else [req[name]["T"]]
-                entries = case_fn(torch, causal_conv1d_fn, name, lengths, seed, dev)
+                if name == PERF_FN_CASE:
+                    entries, fn_perf_fn = case_fn(torch, causal_conv1d_fn, name,
+                                                  lengths, seed, dev, want_perf=True)
+                    fn_perf_stats = timing.measure(fn_perf_fn,
+                                                   warmup=a.warmup, reps=a.reps)
+                    del fn_perf_fn
+                else:
+                    entries = case_fn(torch, causal_conv1d_fn, name, lengths, seed, dev)
             results.extend(entries)
             covered.append(name)
             case_meta[name] = {"seed": seed, "duration_s": round(time.time() - t0, 1),
@@ -158,13 +169,41 @@ def gpu_run(r: report.KernelReport, a) -> None:
     r.set_gate("NUMERIC", *tolerance.numeric_gate(KID, results))
     r.set_gate("SHAPES", *shapes.shapes_gate(KID, covered))
     run_sanitizer_gate(r)
-    model = shapes.perf_bytes_model(KID, b=32, mode="update")
-    st, rs, ev = timing.perf_gate(
-        KID, perf_stats["median_us"] if perf_stats else None, model,
-        a.phase0_verdict, a.twin, stats=perf_stats)
-    ev["perf_case"] = PERF_CASE
-    ev["note"] = ("대표=최대 배치 decode(launch-bound 왜곡 최소). b1/b8 update 는 "
-                  "launch 지배라 roofline 대비 무의미 — evidence cases 참조")
+    # 사전등록 규칙(k04와 동일): roofline < 30µs 케이스는 launch 고정비 지배 → 판정 제외.
+    upd_model = shapes.perf_bytes_model(KID, b=32, mode="update")
+    peaks = None
+    rl = None
+    vp = a.phase0_verdict if a.phase0_verdict and os.path.isfile(a.phase0_verdict) else None
+    if vp:
+        tp = timing.resolve_twin_path(vp, a.twin)
+        if tp:
+            peaks = timing.load_twin_peaks(tp)
+    if peaks:
+        rl = timing.roofline_us(upd_model["bytes"], upd_model.get("macs", 0.0),
+                                upd_model.get("alu_ops", 0.0), peaks)
+    judge_update = rl is None or rl["roofline_us"] >= PERF_JUDGE_MIN_ROOFLINE_US
+    if judge_update or fn_perf_stats is None:
+        st, rs, ev = timing.perf_gate(
+            KID, perf_stats["median_us"] if perf_stats else None, upd_model,
+            a.phase0_verdict, a.twin, stats=perf_stats)
+        ev["perf_case"] = PERF_CASE
+        if not judge_update:
+            ev["note_fallback"] = (f"{PERF_FN_CASE} 측정 실패로 {PERF_CASE} 판정 유지 — "
+                                   "launch 고정비 지배 구간이라 FAIL 시 위양성 가능성 검토")
+    else:
+        fn_model = shapes.perf_bytes_model(KID, **req[PERF_FN_CASE])
+        st, rs, ev = timing.perf_gate(
+            KID, fn_perf_stats["median_us"], fn_model,
+            a.phase0_verdict, a.twin, stats=fn_perf_stats)
+        ev["perf_case"] = PERF_FN_CASE
+        ev["excluded"] = {PERF_CASE: {
+            "roofline_us": rl["roofline_us"],
+            "median_us": perf_stats["median_us"] if perf_stats else None,
+            "reason": f"roofline {rl['roofline_us']:.1f}µs < "
+                      f"{PERF_JUDGE_MIN_ROOFLINE_US}µs — launch 고정비 지배 구간, "
+                      "판정 제외(사전등록 규칙, k04와 동일)"}}
+    ev["note"] = ("판정 대표 = roofline≥30µs 케이스. upd_b32 등 update 측정치는 "
+                  "항상 evidence 에 보존 — cases/excluded 참조")
     r.set_gate("PERF", st, rs, ev)
 
 
@@ -211,8 +250,12 @@ def case_update(torch, update_fn, name, b, seed, dev):
     return entries, perf_fn
 
 
-def case_fn(torch, fn, name, lengths, seed, dev):
-    """prefill fn: q/k/v 3파트 각각 호출 (프로덕션 split 뷰 그대로), varlen+state 대조."""
+def case_fn(torch, fn, name, lengths, seed, dev, want_perf=False):
+    """prefill fn: q/k/v 3파트 각각 호출 (프로덕션 split 뷰 그대로), varlen+state 대조.
+
+    want_perf=True 면 (entries, perf_fn) 반환 — perf_fn 은 프로덕션과 동일한 3파트
+    호출을 재실행한다 (conv_state 는 반복 중 변형되지만 타이밍에는 무영향).
+    """
     g = torch.Generator().manual_seed(seed)
     N = len(lengths)
     T = sum(lengths)
@@ -228,9 +271,12 @@ def case_fn(torch, fn, name, lengths, seed, dev):
     cu = torch.tensor([0] + [sum(lengths[:i + 1]) for i in range(N)],
                       dtype=torch.int32, device=dev)
     entries = []
+    perf_xs = []
     for pi, pname in enumerate(("q", "k", "v")):
         gs = torch.Generator().manual_seed(seed + 10 + pi)
         x = mk(torch, gs, T, PROJ, dev=dev)                  # (T, dim) → 전치 = channel-last
+        if want_perf:
+            perf_xs.append(x.transpose(0, 1))                # 벤치 재호출용으로 유지
         st_before = parts_state[pi][idx_l].float().clone()   # (N, PROJ, W-1)
         out = fn(x.transpose(0, 1), parts_weight[pi], None,
                  conv_states=parts_state[pi], query_start_loc=cu,
@@ -250,7 +296,16 @@ def case_fn(torch, fn, name, lengths, seed, dev):
             KID, torch.stack(s_refs), parts_state[pi][idx_l].float(),
             case=f"{name}/state_{pname}"))
         del x, out, o_refs, s_refs
-    return entries
+    if not want_perf:
+        return entries
+
+    def perf_fn():
+        for pi in range(3):
+            fn(perf_xs[pi], parts_weight[pi], None, conv_states=parts_state[pi],
+               query_start_loc=cu, cache_indices=idx, has_initial_state=has_init,
+               activation="silu")
+
+    return entries, perf_fn
 
 
 def case_fn_update_carry(torch, fn, update_fn, seed, dev):
@@ -416,8 +471,15 @@ def main() -> int:
             gpu_run(r, a)
     except SystemExit as e:
         return int(e.code or 0)
-    except Exception:
+    except Exception as e:
         traceback.print_exc()
+        try:  # k04와 대칭: crash 도 리포트를 남긴다 (집계 MISSING 방지 — CRASH 로그도 S3 입력물)
+            r.add_evidence("harness_crash", {
+                "error": f"{type(e).__name__}: {e}",
+                "trace_tail": traceback.format_exc()[-1200:]})
+            r.write(a.report_dir)
+        except Exception:
+            pass
         return report.EXIT_ERR
     jp, _ = r.write(a.report_dir)
     d = r.as_dict()

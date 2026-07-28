@@ -80,14 +80,21 @@ echo "[run_all] 반출 tar: $TAR"
 [[ ${#MISSING[@]} -gt 0 ]] && echo "[run_all] 미저작 하네스: ${MISSING[*]}"
 
 FAIL=0
+PRECOND=()
 for k in "${!RC[@]}"; do
   [[ ${RC[$k]} -eq 1 ]] && FAIL=1
+  [[ ${RC[$k]} -eq 2 ]] && PRECOND+=("$k")
   [[ ${RC[$k]} -ge 3 ]] && FAIL=1
 done
 [[ $AGG_RC -eq 1 ]] && FAIL=1
 if [[ $FAIL -eq 1 ]]; then
   echo "[run_all] 종합: FAIL 존재 — kernel-report/SUMMARY.md 확인 (FAIL/CRASH 로그도 S3 입력물이다)"
   exit 1
+fi
+if [[ ${#PRECOND[@]} -gt 0 ]]; then
+  echo "[run_all] 종합: FAIL 없음 — 단, 사전조건 미충족(rc=2)으로 실행되지 않은 커널 ${#PRECOND[@]}개: ${PRECOND[*]}"
+  echo "[run_all]        이 결과를 성공으로 읽지 말 것 — 해당 커널 로그 확인 후 재실행 필요"
+  exit 2
 fi
 echo "[run_all] 종합: FAIL 없음 (${DRY:+dry-run 상한=INCOMPLETE})"
 exit 0

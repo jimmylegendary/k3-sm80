@@ -341,8 +341,15 @@ def main() -> int:
             gpu_run(r, a)
     except SystemExit as e:
         return int(e.code or 0)
-    except Exception:
+    except Exception as e:
         traceback.print_exc()
+        try:  # k04와 대칭: crash 도 리포트를 남긴다 (집계 MISSING 방지 — CRASH 로그도 S3 입력물)
+            r.add_evidence("harness_crash", {
+                "error": f"{type(e).__name__}: {e}",
+                "trace_tail": traceback.format_exc()[-1200:]})
+            r.write(a.report_dir)
+        except Exception:
+            pass
         return report.EXIT_ERR
     jp, _ = r.write(a.report_dir)
     d = r.as_dict()

@@ -1,7 +1,7 @@
 # k07_situ_act — SiTU-GLU 언퓨즈드 참조 activation
 
 - 종합: **INCOMPLETE** (cpu-dry-run — 실커널 미실행)
-- 생성: 2026-07-28T09:53:29+00:00 · 소요 0.003s · repo fcd943b
+- 생성: 2026-07-28T10:03:14+00:00 · 소요 0.003s · repo db3c9de
 
 | 게이트 | 판정 | 사유 |
 |---|---|---|

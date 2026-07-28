@@ -7,7 +7,7 @@
     "nvidia_smi": null,
     "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
     "python": "3.14.3",
-    "repo_commit": "fcd943b",
+    "repo_commit": "db3c9de",
     "torch": null,
     "torch_cuda_arch_list": null,
     "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
@@ -56,7 +56,7 @@
   },
   "id": "k02_kda_recurrent",
   "meta": {
-    "created_utc": "2026-07-28T09:53:28+00:00",
+    "created_utc": "2026-07-28T10:03:13+00:00",
     "dry_run": true,
     "duration_s": 0.0,
     "pins": {

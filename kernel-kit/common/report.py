@@ -273,6 +273,7 @@ def _selftest(report_dir: str | None) -> int:
     """리포트 경로 전체(생성→기록→검증→집계 로직)를 CPU에서 검증. 결정적."""
     import tempfile
     tmp = report_dir or tempfile.mkdtemp(prefix="s2-report-selftest-")
+    os.makedirs(tmp, exist_ok=True)          # --report-dir 미존재 경로 크래시 방지
     r = KernelReport("k02_kda_recurrent", dry_run=True, pins={"selftest": True})
     st, rs, ev = shapes.shapes_gate("k02_kda_recurrent",
                                     list(shapes.REQUIRED_SHAPES["k02_kda_recurrent"]))
