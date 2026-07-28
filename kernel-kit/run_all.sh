@@ -31,7 +31,9 @@ mkdir -p "$REPORT_DIR"
 # 우선) / venv-probe(Stage1 wheel) — activate 없이 실행해도 여기서 자동으로 잡는다.
 WORK="${K3_WORK_DIR:-$HOME/k3-sm80-work}"
 if [[ -n "${PYTHON:-}" ]]; then PY="$PYTHON"
-elif [[ -n "${VIRTUAL_ENV:-}" ]]; then PY="python3"
+elif [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/python3" ]]; then
+  # PATH 가 venv 를 안 가리키는 잔류 VIRTUAL_ENV 케이스 방지 — 경로로 직접 지정(codex 리뷰 확인)
+  PY="$VIRTUAL_ENV/bin/python3"
 elif [[ -x "$WORK/venv-k3/bin/python3" ]]; then
   PY="$WORK/venv-k3/bin/python3"; echo "[run_all] venv 자동선택: $WORK/venv-k3"
 elif [[ -x "$WORK/venv-probe/bin/python3" ]]; then

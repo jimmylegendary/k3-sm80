@@ -182,8 +182,11 @@ def main(argv: list[str]) -> int:
             print("[env_check] 사전조건 충족 — 진행")
         return EXIT_OK
     if not as_json:
-        print("[env_check] GPU 사전조건 미충족 — 커널 실행 skip. "
-              "GPU 없는 호스트에서는 --cpu-dry-run 으로 참조 경로만 검증하라.", file=sys.stderr)
+        fails = ", ".join(c["check"] for c in checks if c["status"] == "FAIL")
+        mode_note = ("비-GPU 항목 FAIL (dry-run 은 GPU 검사를 안 한다)" if dry
+                     else "GPU 없는 호스트에서는 --cpu-dry-run 으로 참조 경로만 검증하라")
+        print(f"[env_check] 사전조건 미충족 — FAIL: [{fails}]. 위 표의 '해결:' 참조. "
+              f"{mode_note}", file=sys.stderr)
     return EXIT_PRECOND
 
 
