@@ -1,7 +1,7 @@
 # k01_kda_chunk — KDA chunk prefill (chunk_kda_with_fused_gate, Triton)
 
 - 종합: **INCOMPLETE** (cpu-dry-run — 실커널 미실행)
-- 생성: 2026-07-28T09:16:48+00:00 · 소요 0.005s · repo 745ceae
+- 생성: 2026-07-28T09:53:28+00:00 · 소요 0.003s · repo fcd943b
 
 | 게이트 | 판정 | 사유 |
 |---|---|---|

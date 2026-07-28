@@ -1,7 +1,7 @@
 # k04_mla_decode — MLA decode (TRITON_MLA, latent 576 absorbed)
 
 - 종합: **INCOMPLETE** (cpu-dry-run — 실커널 미실행)
-- 생성: 2026-07-28T09:01:18+00:00 · 소요 0.034s · repo de8dd04
+- 생성: 2026-07-28T09:53:28+00:00 · 소요 0.034s · repo fcd943b
 
 | 게이트 | 판정 | 사유 |
 |---|---|---|

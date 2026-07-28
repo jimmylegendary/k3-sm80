@@ -1,7 +1,7 @@
 # k05_marlin_moe_w4a16 — Marlin W4A16 MoE (marlin_moe_wna16, #35922 대상)
 
 - 종합: **INCOMPLETE** (cpu-dry-run — 실커널 미실행)
-- 생성: 2026-07-28T08:57:10+00:00 · 소요 0.048s · repo beda848
+- 생성: 2026-07-28T09:53:28+00:00 · 소요 0.038s · repo fcd943b
 
 | 게이트 | 판정 | 사유 |
 |---|---|---|

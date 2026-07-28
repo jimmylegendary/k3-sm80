@@ -7,7 +7,7 @@
     "nvidia_smi": null,
     "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
     "python": "3.14.3",
-    "repo_commit": "beda848",
+    "repo_commit": "fcd943b",
     "torch": null,
     "torch_cuda_arch_list": null,
     "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
@@ -104,9 +104,9 @@
   },
   "id": "k06_dequant_bench",
   "meta": {
-    "created_utc": "2026-07-28T08:57:10+00:00",
+    "created_utc": "2026-07-28T09:53:28+00:00",
     "dry_run": true,
-    "duration_s": 0.071,
+    "duration_s": 0.061,
     "pins": {
       "hf": "moonshotai/Kimi-K3@9f62e4e9",
       "vllm_kimi_k3": "0498dc7e",

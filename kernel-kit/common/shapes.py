@@ -112,7 +112,14 @@ _PREFILL_CASES = {
     "b1_T8k": dict(b=1, T=8192),
     "b1_T128k": dict(b=1, T=131072),
     "b8_T8k_varlen": dict(b=8, T=8192, varlen=True),
-    "b32_T8k": dict(b=32, T=8192),
+    # b32 프리필 = T 2048/seq (사전등록 2026-07-28, 검증 수정자 — VERIFICATION.md #2):
+    #   구 b32_T8k(32×8192 = 262,144 tok 단일 varlen 호출)는 핀 0498dc7e 커널의 중간 텐서
+    #   동시 상주(l2norm q/k 사본 + g fp32 + w/u/kg + h(1,NT,96,128,128) 등 ≈104GB)로
+    #   A100 80GB 확정 OOM → NUMERIC·SHAPES 영구 FAIL. 프로덕션 chunked-prefill 도 호출당
+    #   이 규모를 내보내지 않아 대표성 없음. PLAN §S2 '배치 32' 커버는 seq 수 32로 성립,
+    #   T축 8k/128k 대표점은 b1_T8k/b8_T8k_varlen/b1_T128k 담당. 32×2048 = 65,536 tok
+    #   (b8_T8k_varlen 과 동일 총량, 상주 ≈26GB).
+    "b32_T2k": dict(b=32, T=2048),
 }
 
 REQUIRED_SHAPES = {

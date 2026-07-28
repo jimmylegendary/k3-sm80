@@ -6,6 +6,9 @@ Phase 2(우회→커널) / Phase 3(재양자화) 분기와 1:1로 연결. 근거
 실행 순서(RUNBOOK §4): probe_35922 → probe_kda_fla(main) → [소스빌드] → pytest KDA 2종
 (tests/models/kimi_k3/ — main 계열 test_kda.py는 pin 0498dc7 트리에 없음, RUNBOOK §3 주석)
 → probe_kda_fla(k3) → probe_k3_modules.
+이후(S2): 같은 노드·venv-k3 에서 `kernel-kit/RUNNER.md` 절차(`run_all.sh`)로 커널 7종 단독
+검증을 이어 돈다 — §4 매트릭스의 Phase 2 진입 형태와 무관하게 S2 4게이트 PASS 커널만
+S4(vLLM 통합)에 들어간다 (docs/PLAN.md §S2).
 
 전제 사실 (recon에서 확정, 프로브가 뒤집을 수 있는 것만 여기서 다룸):
 - 원본 K3 ckpt(MXFP4)의 SM80 **auto** 백엔드 생존 후보는 **MARLIN/BATCHED_MARLIN뿐**

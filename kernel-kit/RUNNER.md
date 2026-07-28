@@ -22,6 +22,8 @@ FAIL/CRASH도 버리는 결과가 아니다 — 특히 k05(#35922)는 crash 재�
 새 환경을 만들지 말 것. `a100-kit/RUNBOOK.md` §1(노드 점검) → §3(Stage 2 `venv-k3` 소스빌드)를
 그대로 재사용한다. kernel-kit 는 **Stage 2 venv-k3 를 기본 환경**으로 한다
 (K3 전용 KDA Triton ops `vllm.models.kimi_k3.nvidia.ops...` 가 이 브랜치에만 있음).
+실행 시점: `a100-kit/DECISION-TREE.md` 의 S1 실행 순서(프로브→소스빌드→pytest) **직후 같은
+세션에서 이어 도는 것이 표준** — S1 이 venv-k3 와 핀 브랜치를 이미 준비해 둔 상태다.
 
 | 커널 | 필요한 환경 | 비고 |
 |---|---|---|
@@ -101,4 +103,4 @@ git add kernel-kit/kernel-report && git commit -m "kernel-kit: A100 S2 실행 �
 | k01 autotune이 매우 느림 | 정상(최초 1회). `TRITON_CACHE_DIR`를 홈에 고정하면 재실행 단축 |
 | k05 sanitizer 출력 폭주 | 정상 — 요약줄(ERROR SUMMARY)만 판정에 쓰인다. 로그는 그대로 반출 |
 | 하네스 MISSING | 해당 커널 하네스가 아직 저작 전 — repo pull 최신화 확인 |
-| OOM (k01 b32/T8k, k04 b32/128k) | 하네스가 케이스 단위로 실행하므로 실패 케이스만 FAIL 기록됨 — 리포트 evidence 확인 후 보고 |
+| OOM (k04 b32/128k 등) | 하네스가 케이스 단위로 실행하므로 실패 케이스만 FAIL 기록됨 — 리포트 evidence 확인 후 보고. (k01 b32 프리필은 상주 산정상 OOM 확정이라 b32_T2k 로 사전 축소 — `VERIFICATION.md` #2) |

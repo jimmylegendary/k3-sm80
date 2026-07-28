@@ -49,7 +49,9 @@ CASE_LENGTHS = {
     "b1_T8k": [8192],
     "b1_T128k": [131072],
     "b8_T8k_varlen": [15, 8192, 300, 16384, 4096, 12288, 8000, 16261],  # 합 65536
-    "b32_T8k": [8192] * 32,
+    # b32 는 T=2048/seq (합 65,536) — 구 [8192]×32 는 A100 80GB OOM 확정
+    # (shapes._PREFILL_CASES 사전등록 주석·VERIFICATION.md #2 근거).
+    "b32_T2k": [2048] * 32,
 }
 EXTRA_CASES = ("state_carry_2x256",)
 
@@ -187,8 +189,12 @@ def gpu_run(r: report.KernelReport, a) -> None:
     r.add_evidence("cases", case_meta)
     r.add_evidence("k3_params", {"H": H, "D": D, "lower_bound": LB, "chunk_size": 64,
                                  "int32_overflow_watch":
-                                 "b32_T8k 총 262,144 tok × 12288 = 3.2e9 elem > int32 — "
-                                 "recon/kda-fla.md §5.3 잠복버그 감시 케이스"})
+                                 "단일호출 최대 elem = b1_T128k 131,072×12288 = 1.61e9 < 2^31. "
+                                 "elem ≥ 2^31 단일호출(≥174,763 tok)은 중간 텐서 상주로 "
+                                 "A100 80GB 초과라 S2에서 실행 불가·프로덕션 chunked-prefill "
+                                 "에도 없음 — recon/kda-fla.md §5.3 int32 리스크는 상한 케이스 "
+                                 "b1_T128k 로 감시(사전등록; 구 b32_T8k 262k tok 는 OOM 확정 "
+                                 "→ b32_T2k 교체, VERIFICATION.md #2)"})
     r.set_gate("NUMERIC", *tolerance.numeric_gate(KID, results))
     r.set_gate("SHAPES", *shapes.shapes_gate(KID, covered))
     run_sanitizer_gate(r)
@@ -295,7 +301,7 @@ def dry_run(r: report.KernelReport, a) -> None:
                    {"selftest": details, "wiring": wiring})
     r.set_gate("SHAPES", "SKIP", "cpu-dry-run: 커널 미실행 — 요구 케이스 정의만 확인",
                {"required": sorted(shapes.REQUIRED_SHAPES[KID]),
-                "planned_lengths": {k: (v if len(v) <= 8 else f"[8192]×{len(v)}")
+                "planned_lengths": {k: (v if len(v) <= 8 else f"[{v[0]}]×{len(v)}")
                                     for k, v in CASE_LENGTHS.items()},
                 "extra": list(EXTRA_CASES)})
     r.set_gate("SANITIZER", "SKIP", "cpu-dry-run: GPU 미실행")

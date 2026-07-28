@@ -7,7 +7,7 @@
     "nvidia_smi": null,
     "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
     "python": "3.14.3",
-    "repo_commit": "745ceae",
+    "repo_commit": "fcd943b",
     "torch": null,
     "torch_cuda_arch_list": null,
     "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
@@ -94,7 +94,7 @@
           "b1_T8k": [
             8192
           ],
-          "b32_T8k": "[8192]×32",
+          "b32_T2k": "[2048]×32",
           "b8_T8k_varlen": [
             15,
             8192,
@@ -109,7 +109,7 @@
         "required": [
           "b1_T128k",
           "b1_T8k",
-          "b32_T8k",
+          "b32_T2k",
           "b8_T8k_varlen"
         ]
       },
@@ -119,9 +119,9 @@
   },
   "id": "k01_kda_chunk",
   "meta": {
-    "created_utc": "2026-07-28T09:16:48+00:00",
+    "created_utc": "2026-07-28T09:53:28+00:00",
     "dry_run": true,
-    "duration_s": 0.005,
+    "duration_s": 0.003,
     "pins": {
       "hf": "moonshotai/Kimi-K3@9f62e4e9",
       "vllm_kimi_k3": "0498dc7e",

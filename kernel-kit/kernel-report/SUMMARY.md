@@ -1,13 +1,13 @@
 # S2 kernel-kit 집계
 
-- 생성: 2026-07-28T09:01:26+00:00 · 대상 7커널
-- 종합: PASS 0 / FAIL 0 / INCOMPLETE 4 / MISSING 3 → S2 완료(전 커널 PASS): 아니오
+- 생성: 2026-07-28T09:53:29+00:00 · 대상 7커널
+- 종합: PASS 0 / FAIL 0 / INCOMPLETE 7 / MISSING 0 → S2 완료(전 커널 PASS): 아니오
 
 | 커널 | 종합 | NUMERIC | SANITIZER | SHAPES | PERF |
 |---|---|---|---|---|---|
-| k01_kda_chunk | **MISSING** | - | - | - | - |
-| k02_kda_recurrent | **MISSING** | - | - | - | - |
-| k03_causal_conv1d | **MISSING** | - | - | - | - |
+| k01_kda_chunk (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
+| k02_kda_recurrent (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
+| k03_causal_conv1d (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
 | k04_mla_decode (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
 | k05_marlin_moe_w4a16 (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
 | k06_dequant_bench (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |

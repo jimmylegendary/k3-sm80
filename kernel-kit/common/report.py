@@ -194,8 +194,11 @@ def render_md(d: dict) -> str:
              "|---|---|---|"]
     for g in GATES:
         gd = d["gates"][g]
+        # md 파이프 이스케이프는 f-string 밖에서 — 3.12 미만은 f-string 표현식 내
+        # 백슬래시가 SyntaxError (RUNBOOK §2 'python 3.10~3.14 허용' 계약 유지).
+        reason_md = gd["reason"].replace("|", "\\|")
         lines.append(f"| {g} | {gd['status']} ({_STATUS_KO[gd['status']]}) | "
-                     f"{gd['reason'].replace('|', '\\|')} |")
+                     f"{reason_md} |")
     env = d["env"]
     lines += ["",
               f"환경: {env.get('device_name') or 'GPU 없음'}"
