@@ -1,11 +1,11 @@
 {
   "counts": {
     "FAIL": 0,
-    "INCOMPLETE": 6,
+    "INCOMPLETE": 7,
     "MISSING": 0,
     "PASS": 0
   },
-  "generated_utc": "2026-07-29T06:42:05+00:00",
+  "generated_utc": "2026-07-29T07:50:58+00:00",
   "invalid": {},
   "kernels": [
     {
@@ -50,6 +50,17 @@
         "SHAPES": "SKIP"
       },
       "id": "k04_mla_decode",
+      "overall": "INCOMPLETE"
+    },
+    {
+      "dry_run": true,
+      "gates": {
+        "NUMERIC": "SKIP",
+        "PERF": "SKIP",
+        "SANITIZER": "SKIP",
+        "SHAPES": "SKIP"
+      },
+      "id": "k05_marlin_moe_w4a16",
       "overall": "INCOMPLETE"
     },
     {
