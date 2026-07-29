@@ -98,5 +98,6 @@ for tier in $TIERS; do
   echo "[push] $tier 업로드 완료"
 done
 
+echo "$RELEASE_TAG" > "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/RELEASE-TAG.txt"   # run/10 이 읽는 최신 태그
 echo "[push] release 경로 완료: https://github.com/$REPO_SLUG/releases/tag/$RELEASE_TAG"
 echo "[push] 사내 반입 절차: docker/PULL.md §2"
