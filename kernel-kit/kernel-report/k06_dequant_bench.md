@@ -1,7 +1,7 @@
 # k06_dequant_bench — W4A16 dequant 마이크로벤치 (dequant_ops/param 재보정)
 
 - 종합: **INCOMPLETE** (cpu-dry-run — 실커널 미실행)
-- 생성: 2026-07-29T05:07:50+00:00 · 소요 0.899s · repo a4b69ce
+- 생성: 2026-07-29T05:15:59+00:00 · 소요 1.375s · repo beb7859
 
 | 게이트 | 판정 | 사유 |
 |---|---|---|

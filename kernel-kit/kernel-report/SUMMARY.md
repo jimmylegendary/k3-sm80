@@ -1,6 +1,6 @@
 # S2 kernel-kit 집계
 
-- 생성: 2026-07-29T05:07:52+00:00 · 대상 7커널
+- 생성: 2026-07-29T05:16:03+00:00 · 대상 7커널
 - 종합: PASS 0 / FAIL 0 / INCOMPLETE 7 / MISSING 0 → S2 완료(전 커널 PASS): 아니오
 
 | 커널 | 종합 | NUMERIC | SANITIZER | SHAPES | PERF |
