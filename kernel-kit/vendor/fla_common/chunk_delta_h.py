@@ -96,12 +96,15 @@ def chunk_gated_delta_rule_fwd_kernel_h_blockdim64(
         b_h4 = tl.zeros([BV, 64], dtype=tl.float32)
 
     # calculate offset
-    h += ((boh * H + i_h) * V * K).to(tl.int64)
-    v += ((bos * H + i_h) * V).to(tl.int64)
-    k += ((bos * Hg + i_h // (H // Hg)) * K).to(tl.int64)
-    w += ((bos * H + i_h) * K).to(tl.int64)
+    # SM80-FIX P2 (K01-SM80-ANALYSIS.md 후보2): 기존 ((...)*V*K).to(tl.int64) 는 int32 로
+    # 곱해 wrap 한 뒤 캐스트라 방어 무효(boh>=1365 에서 발화하는 시한폭탄). 괄호 항을
+    # 먼저 int64 로 승격한 뒤 곱한다 — 의미 불변, wrap 경로 제거.
+    h += (boh * H + i_h).to(tl.int64) * V * K
+    v += (bos * H + i_h).to(tl.int64) * V
+    k += (bos * Hg + i_h // (H // Hg)).to(tl.int64) * K
+    w += (bos * H + i_h).to(tl.int64) * K
     if SAVE_NEW_VALUE:
-        v_new += ((bos * H + i_h) * V).to(tl.int64)
+        v_new += (bos * H + i_h).to(tl.int64) * V
     stride_v = H * V
     stride_h = H * V * K
     stride_k = Hg * K

@@ -307,7 +307,10 @@ def chunk_gla_fwd_kernel_o(
             (1, 0),
         )
         p_h = tl.make_block_ptr(
-            h + (i_tg * H + i_h) * K * V,
+            # SM80-FIX P1 (K01-SM80-ANALYSIS.md 후보1): h 는 T=128k 에서 numel 3.22e9 > 2^31.
+            # (i_tg*H+i_h)*K*V 가 int32 로 wrap (i_tg=1365, i_h=32 에서 정확히 2^31 도달)
+            # → IMA. head-index 항을 int64 로 승격 후 K*V 곱 (생산자 chunk_delta_h 와 대칭).
+            h + (i_tg * H + i_h).to(tl.int64) * K * V,
             (V, K),
             (K, 1),
             (i_v * BV, i_k * BK),
