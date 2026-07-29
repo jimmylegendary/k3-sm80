@@ -113,8 +113,11 @@ AGG_RC=$?
 STAMP=$(date +%Y%m%d-%H%M%S)
 TAR="$KIT_DIR/k3-sm80-kernel-report-$STAMP.tgz"
 tar czf "$TAR" -C "$(dirname "$REPORT_DIR")" "$(basename "$REPORT_DIR")"
-echo "[run_all] 반출 tar: $TAR"
+echo "[run_all] 반출 tar: $TAR (파일 반출 불가 환경이면 아래 RELAY 블록으로 회신)"
 [[ ${#MISSING[@]} -gt 0 ]] && echo "[run_all] 미저작 하네스: ${MISSING[*]}"
+
+# ---- 3.5) 화면 전달용 압축 요약 (RELAY) — 항상 출력, 실패해도 rc 에 영향 없음 ------
+"$PY" "$KIT_DIR/common/relay.py" "$REPORT_DIR" || true
 
 FAIL=0
 PRECOND=()

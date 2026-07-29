@@ -49,6 +49,5 @@ case $rc in
   2) echo "[test] 종합 exit 2 — 사전조건 미충족: 커널이 실행되지 않았다. 성공으로 읽지 말 것." ;;
   *) echo "[test] 종합 exit $rc — 프레임워크 오류. kernel-kit/kernel-report/*.log 확인." ;;
 esac
-tgz=$(ls -t "$ROOT"/kernel-kit/k3-sm80-kernel-report-*.tgz 2>/dev/null | head -1)
-[[ -n ${tgz:-} ]] && echo "[test] 반출 tar: ${tgz#$ROOT/}  → 다음: bash run/30-send-results.sh"
+echo "[test] 회신: 위 RELAY 블록 + 'exit $rc' 를 그대로 전달 (파일 반출 가능하면 run/30 으로 tgz 회신)"
 exit $rc

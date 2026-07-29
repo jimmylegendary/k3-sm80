@@ -13,8 +13,14 @@ git clone git@github.com:jimmylegendary/k3-sm80.git && cd k3-sm80
 |---|---|---|---|
 | 1 | `bash run/00-check-node.sh` | 노드 사전점검 (docker/GPU/드라이버/zstd — 설치 없음) | PASS/FAIL 표. exit 0 이면 진행 가능 |
 | 2 | `bash run/10-load-image.sh triton` | GitHub Release 에서 이미지 tar 다운로드→검증→`docker load` (멱등) | `k3-sm80-kernelkit:triton` 사용 가능 (~3.7GB 전송) |
-| 3 | `bash run/20-kernel-test.sh triton` | **커널 단독검증** — k01~k04·k06·k07 을 각각 fp32 참조와 대조 (vLLM 불필요) | 커널별 4게이트 판정 + 반출용 `kernel-report-*.tgz` |
-| 4 | `bash run/30-send-results.sh` | 결과 tgz 를 repo 에 커밋·푸시 (회신) | 개발 호스트가 분석 → 커널 수정(S3) 진행 |
+| 3 | `bash run/20-kernel-test.sh triton` | **커널 단독검증** — k01~k04·k06·k07 을 각각 fp32 참조와 대조 (vLLM 불필요) | 커널별 4게이트 판정 + 실행 끝의 **RELAY 블록** |
+| 4 | **화면의 RELAY 블록(≤12줄) + exit 코드를 그대로 전달** | 파일 반출 불가 전제의 회신 채널 — 타이핑/전사 가능하게 압축돼 있음 | 개발 호스트가 이것만으로 커널 수정(S3) 진행 |
+
+회신 규약(중요): 실행 마지막에 `==== RELAY ====` 블록이 항상 출력된다. **그 블록 전체 +
+run_all 최종 exit 코드**만 옮겨주면 된다. FAIL/CRASH 가 있으면 해당 커널 로그
+(`kernel-kit/kernel-report/<커널id>.log`)의 **Error/Traceback 이 있는 줄 1~3개**를 추가로
+옮겨주면 진단이 훨씬 빨라진다. (파일 반출이 가능해지면 `run/30-send-results.sh` 로 tgz
+커밋·푸시가 더 완전한 채널 — 선택사항.)
 
 full 티어(k05 Marlin crash 재현 + compute-sanitizer 포함)가 Release 에 올라오면 2~4를
 `full` 로 반복: `bash run/10-load-image.sh full && bash run/20-kernel-test.sh full`.
