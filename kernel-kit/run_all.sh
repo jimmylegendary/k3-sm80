@@ -68,6 +68,8 @@ fi
 # ---- 1) 프레임워크 자체점검 (호스트 게이트: py_compile + selftest green) --------
 echo "[run_all] 프레임워크 자체점검"
 "$PY" -m py_compile "$KIT_DIR"/common/*.py || exit 3
+# vendor 게이트: py_compile + AST(vllm import 0건) — PLAN §S2 컨테이너 gate 의 "vllm import 0건(k05 제외)"
+"$PY" "$KIT_DIR/vendor/check_no_vllm.py" --quiet || { echo "[run_all] vendor check_no_vllm FAIL"; exit 3; }
 "$PY" "$KIT_DIR/common/shapes.py" --check > "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] shapes selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
 "$PY" "$KIT_DIR/common/tolerance.py" >> "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] tolerance selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }
 "$PY" "$KIT_DIR/common/timing.py" --selftest --phase0-verdict "$VERDICT" >> "$REPORT_DIR/framework-selftest.log" 2>&1 || { echo "[run_all] timing selftest FAIL"; tail -5 "$REPORT_DIR/framework-selftest.log"; exit 3; }

@@ -2,6 +2,9 @@
 
 무엇을 검증하나
   vLLM `fused_marlin_moe`(W4A16, uint4b8 g128)를 vLLM 서빙 스택 없이 단독 호출한다.
+  ⚠ **k05 는 vLLM 설치 필수** — Marlin 은 vLLM C-확장(_moe_C)이라 kernel-kit/vendor/
+  (torch+triton 티어) 로 대체 불가. venv-k3(kimi-k3 소스빌드) 또는 도커 `:full`
+  이미지에서만 실행 (k01~k04·k07 은 vendored 커널로 vLLM 없이 실행 — PLAN §S2).
   참조 = 동일 dequant(bf16) 가중치의 fp32 grouped matmul (양자화 오차는 참조에 포함,
   tolerance.py k05 정책 근거 그대로). 목적의 절반은 #35922 crash 재현이므로:
     - **크기 사다리**: experts 8→64→256→896, hidden(K)축 512→3584→7168 로 crash 경계 탐색.

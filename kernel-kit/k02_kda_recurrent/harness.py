@@ -10,6 +10,8 @@
   보조 arm: fused_recurrent_kda_fwd(q,k,v,g,beta,…,cu_seqlens,ssm_state_indices)
     — spec-decode 경로가 쓰는 dense 커널(1 tok/seq) 을 같은 참조로 대조.
   state 레이아웃 = (slots, H, V, K) fp32 — naive 참조 (K,V) 의 전치.
+  import 는 **vendor 우선**(kernel-kit/vendor/fla_kda — 동일 핀 vendored 사본,
+  vLLM 설치 불필요) → 실패 시 vllm 폴백. 출처는 evidence.kernel_import.
 
 판정 (docs/PLAN.md §S2 4게이트):
   NUMERIC   fp32 참조 recurrent(common/kda_ref.py, vLLM naive 이식) 대비 rmse_rel ≤ 5e-3
@@ -44,6 +46,23 @@ from common import env_check, kda_ref, report, shapes, timing, tolerance  # noqa
 KID = "k02_kda_recurrent"
 PINS = {"vllm_kimi_k3": "0498dc7e", "vllm_main": "d223c900",
         "hf": "moonshotai/Kimi-K3@9f62e4e9"}
+
+
+def import_kda_ops():
+    """KDA 커널 import: vendor(vLLM 불필요) 우선 → vllm 폴백. (모듈, 출처 dict) 반환."""
+    try:
+        from vendor import fla_kda as m  # kernel-kit/vendor (sys.path=_KIT)
+        return m, {"source": "vendor", "module_file": m.__file__,
+                   "pin": PINS["vllm_kimi_k3"]}
+    except Exception as e_v:
+        try:
+            import vllm.models.kimi_k3.nvidia.ops.third_party.kda as m
+            return m, {"source": "vllm", "module_file": m.__file__,
+                       "vendor_import_error": f"{type(e_v).__name__}: {e_v}"[:300]}
+        except ImportError as e_f:
+            raise ImportError(
+                f"vendor({type(e_v).__name__}: {e_v}) / vllm({e_f}) 모두 import 불가"
+            ) from e_f
 H, D = shapes.KDA_HEADS, shapes.KDA_HEAD_DIM          # 96, 128
 LB = shapes.KDA_GATE_LOWER_BOUND                       # -5.0
 PERF_CASE = "b32_ctx8k"
@@ -120,15 +139,16 @@ def ref_step(torch, mixed, raw_g, raw_beta, A_log, dt_bias, ref_state):
 def gpu_run(r: report.KernelReport, a) -> None:
     import torch
     try:
-        from vllm.models.kimi_k3.nvidia.ops.third_party.kda import (
-            chunk_kda_with_fused_gate,
-            fused_recurrent_kda_fwd,
-            fused_recurrent_kda_packed_decode,
-        )
+        kda_mod, kda_src = import_kda_ops()
+        chunk_kda_with_fused_gate = kda_mod.chunk_kda_with_fused_gate
+        fused_recurrent_kda_fwd = kda_mod.fused_recurrent_kda_fwd
+        fused_recurrent_kda_packed_decode = kda_mod.fused_recurrent_kda_packed_decode
     except ImportError as e:
-        print(f"[{KID}] vLLM kimi-k3 브랜치 ops import 실패: {e}\n"
-              f"  → venv-k3(Stage 2 소스빌드, RUNNER §1) 에서 실행할 것.", file=sys.stderr)
+        print(f"[{KID}] KDA ops import 실패 (vendor/vllm 모두): {e}\n"
+              f"  → torch+triton venv(triton 티어, vendor 경로) 또는 venv-k3(RUNNER §1) 확인.",
+              file=sys.stderr)
         sys.exit(report.EXIT_PRECOND)
+    r.add_evidence("kernel_import", kda_src)
 
     dev = "cuda"
     results: list[tolerance.NumericResult] = []
@@ -373,10 +393,9 @@ def run_sanitizer_gate(r: report.KernelReport, timeout: int = 2400) -> None:
 def sanitizer_arm() -> int:
     """축소 shape: packed 2스텝(산란 인덱스·null 행 포함) + dense fwd 1회 — memcheck 대상."""
     import torch
-    from vllm.models.kimi_k3.nvidia.ops.third_party.kda import (
-        fused_recurrent_kda_fwd,
-        fused_recurrent_kda_packed_decode,
-    )
+    kda_mod, _src = import_kda_ops()          # vendor 우선 → vllm 폴백 (본 실행과 동일)
+    fused_recurrent_kda_fwd = kda_mod.fused_recurrent_kda_fwd
+    fused_recurrent_kda_packed_decode = kda_mod.fused_recurrent_kda_packed_decode
     dev = "cuda"
     seed = shapes.stable_seed(KID, "sanitizer_arm")
     b, slots = 3, 6

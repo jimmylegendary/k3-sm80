@@ -148,10 +148,12 @@ def check_preconditions(env: dict, cpu_dry_run: bool = False) -> tuple[bool, lis
         env.get("triton") or "triton 미설치 (k01~k04 Triton 커널 실행 불가) — torch 설치에 "
         "수반됨. 해결: bootstrap 또는 해당 venv 에서 `pip install triton`")
 
-    # vllm 은 env_check 를 막지 않는다(k06/k07 은 불필요) — 단 k01~k05 는 개별 rc=2 로 skip 됨
+    # vllm 은 k05(Marlin C-확장)만 필요 — k01~k04·k07 은 kernel-kit/vendor/ 의
+    # vendored 커널로 torch+triton 만으로 실행된다 (triton 티어에선 불필요).
     add("vllm", "PASS" if env.get("vllm") else "SKIP",
-        env.get("vllm") or "vllm import 불가 — k01~k05 하네스가 각자 rc=2 로 skip 된다. "
-        "해결: `bash a100-kit/bootstrap.sh --stage2` (kimi-k3 소스빌드 venv)")
+        env.get("vllm") or "vllm 미설치 — k05 만 필요(triton 티어에선 불필요; "
+        "k01~k04·k07 은 vendor 커널로 실행, k05 는 rc=2 skip). "
+        "k05 필요 시: `bash a100-kit/bootstrap.sh --stage2` (kimi-k3 소스빌드 venv)")
 
     # sanitizer는 없어도 진행은 가능(SANITIZER 게이트가 SKIP 사유를 남김) → WARN 성격의 SKIP
     if env.get("compute_sanitizer"):

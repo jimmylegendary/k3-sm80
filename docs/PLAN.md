@@ -48,6 +48,20 @@ FlashKDA(CUTLASS sm90a) 포팅은 **하지 않는다** — Triton 폴백이 공�
   k07 SiTU 언퓨즈드 참조.
 - 호스트 게이트(사내 반입 전): py_compile + CPU dry-run(참조 경로만) green.
 
+#### S2 전달 모델 (2026-07-29 Jimmy 지시로 변경: 사내 pip 설치 → 도커 이미지)
+사내 vllm 설치 실패 + "커널은 torch로 단독 테스트해야" 지적 반영:
+- **커널 vendor화**: k01~k04·k07 이 쓰는 Triton 커널 소스를 kimi-k3 pin(0498dc7e)에서
+  `kernel-kit/vendor/` 로 복사(출처·커밋·라이선스 헤더) → **vLLM 설치 없이 torch+triton 만으로
+  단독 실행**. k05(Marlin)만 vLLM C-extension 이라 vLLM 빌드 필요 — 이미지가 흡수.
+- **도커 2티어** (빌드는 개발 호스트, 사내는 pull/load 만):
+  - `ghcr.io/jimmylegendary/k3-sm80-kernelkit:triton` — torch+triton+vendored 커널.
+    k01~k04·k06·k07 실행. GPU 없이도 빌드·dry-run 가능(컨테이너 gate).
+  - `...:full` — + vLLM kimi-k3 pin 소스빌드(TORCH_CUDA_ARCH_LIST=8.0). k05 + S4 용.
+- **반입 2경로**: ① ghcr pull ② (registry 차단 대비) GitHub Release 에 `docker save` 분할
+  tar → 사내에서 결합 후 `docker load`. 절차는 `docker/PULL.md`.
+- 컨테이너 gate: triton 이미지 안에서 `run_all.sh --cpu-dry-run` green + vllm import 0건
+  (k05 제외)이 반입 전 필수.
+
 ### S3 — 커널 수정 (조건부, S1·S2 결과로 개시)
 - 목적: S2에서 FAIL/CRASH 난 커널의 수정 (#35922 최우선).
 - 완료 판정: 최소 재현 케이스 PASS 전환 + 해당 커널 S2 4게이트 재통과 +

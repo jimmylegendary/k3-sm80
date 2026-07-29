@@ -24,8 +24,11 @@ vLLM 측 구현 (kimi-k3 `0498dc7e` 원문 확인):
 S2 대상과 arm:
   PLAN 커널 표: "SiTU activation — 언퓨즈드 참조로 대체(성능 후순위)".
   - arm `native`  (항상): 언퓨즈드 순수 PyTorch(위 수식, fp32 내부→bf16) — SM80 폴백 경로.
-  - arm `fused`   (존재 시): `torch.ops._C.situ_and_mul` — venv-k3(브랜치 소스빌드)에서
-    존재. torch+triton 만 있는 venv 에선 미등록 → arm SKIP 사유 기록(게이트 FAIL 아님).
+    구현은 **vendor 우선**(kernel-kit/vendor/situ.py = 동일 핀 forward_native 발췌,
+    vLLM 불필요) → import 실패 시 하네스 내장 동일 수식. 출처는 evidence.native_arm_source.
+  - arm `fused`   (존재 시): `torch.ops._C.situ_and_mul` — C-확장이라 vendor 불가,
+    venv-k3(브랜치 소스빌드)에서만 존재. torch+triton 만 있는 venv(triton 티어)에선
+    미등록 → arm SKIP 사유 기록(게이트 FAIL 아님).
   NUMERIC 은 두 arm 모두 fp32 참조 대비 tolerance.TOL[k07] 로 판정.
 
 참조 (NUMERIC 기준): 동일 bf16 입력을 fp32 로 승격해 위 수식을 fp32 로 계산한 값.
@@ -89,8 +92,21 @@ def _situ_fp32(torch, x_f32):
     return a * u
 
 
+# native arm 구현: vendor(핀 발췌) 우선 → 실패 시 하네스 내장 동일 수식 (모듈 import 는
+# 호스트 dry-run 을 깨지 않도록 가드 — vendor/situ.py 는 torch 를 요구한다)
+try:
+    from vendor.situ import situ_and_mul_native as _vendor_situ  # noqa: E402
+    _NATIVE_ARM_SOURCE = "vendor/situ.py@0498dc7e (SituAndMul.forward_native 발췌)"
+except Exception as _e_vendor_situ:
+    _vendor_situ = None
+    _NATIVE_ARM_SOURCE = ("harness 내장 수식 (vendor import 실패: "
+                          f"{type(_e_vendor_situ).__name__}: {_e_vendor_situ})"[:300])
+
+
 def _situ_native(torch, x_bf16):
     """언퓨즈드 배포 경로 = vLLM forward_native: bf16 입력 → fp32 내부 → bf16 출력."""
+    if _vendor_situ is not None:
+        return _vendor_situ(x_bf16, BETA, LINEAR_BETA)
     return _situ_fp32(torch, x_bf16.float()).to(x_bf16.dtype)
 
 
@@ -135,6 +151,7 @@ def run_gpu(args, rep: report.KernelReport) -> int:
     dev = "cuda"
     op, op_err = _probe_fused_op()
     rep.add_evidence("formula", FORMULA)
+    rep.add_evidence("native_arm_source", _NATIVE_ARM_SOURCE)
     rep.add_evidence("fused_op", {"available": op is not None,
                                   "detail": op_err or "torch.ops._C.situ_and_mul (브랜치 소스빌드)"})
     rep.add_evidence("input_dist",

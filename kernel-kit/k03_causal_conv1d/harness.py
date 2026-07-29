@@ -11,6 +11,8 @@
              validate_data=True, out 별도 버퍼. index 0 = null block (NULL_BLOCK_ID=0).
   가중치 fp32(K3 conv1d params_dtype=float32, bias 없음) · conv state bf16
   · 풀 저장 레이아웃 (slots, W-1, dim) → 커널엔 transpose(-1,-2) 뷰 전달 (L469-470).
+  import 는 **vendor 우선**(kernel-kit/vendor/mamba_ops/causal_conv1d.py — 동일 핀
+  vendored 사본, vLLM 설치 불필요) → 실패 시 vllm 폴백. 출처는 evidence.kernel_import.
 
 판정 (docs/PLAN.md §S2 4게이트):
   NUMERIC   fp32 참조(common/kda_ref.py — 업스트림 test_causal_conv1d.py ref 이식) 대비
@@ -55,6 +57,23 @@ PERF_FN_CASE = "fn_b1_T8k"                 # roofline ≈590µs — launch 고�
 PERF_JUDGE_MIN_ROOFLINE_US = 30.0          # k04와 동일한 사전등록 제외 규칙
 N_STEPS = 4
 EXTRA_CASES = ("fn_then_update_carry",)
+
+
+def import_conv_ops():
+    """causal_conv1d import: vendor(vLLM 불필요) 우선 → vllm 폴백. (모듈, 출처 dict)."""
+    try:
+        from vendor.mamba_ops import causal_conv1d as m  # kernel-kit/vendor
+        return m, {"source": "vendor", "module_file": m.__file__,
+                   "pin": PINS["vllm_kimi_k3"]}
+    except Exception as e_v:
+        try:
+            import vllm.model_executor.layers.mamba.ops.causal_conv1d as m
+            return m, {"source": "vllm", "module_file": m.__file__,
+                       "vendor_import_error": f"{type(e_v).__name__}: {e_v}"[:300]}
+        except ImportError as e_f:
+            raise ImportError(
+                f"vendor({type(e_v).__name__}: {e_v}) / vllm({e_f}) 모두 import 불가"
+            ) from e_f
 
 # fn_b8 varlen: 길이 2(<W-1=3) seq 를 has_init=False 자리(홀수 idx)에 배치 —
 # 초기state 없는 짧은 seq 의 state 좌측 0-패드 경로를 numeric 으로 검증
@@ -103,15 +122,15 @@ def scatter_indices(seed: int, b: int, slots: int):
 def gpu_run(r: report.KernelReport, a) -> None:
     import torch
     try:
-        from vllm.model_executor.layers.mamba.ops.causal_conv1d import (
-            causal_conv1d_fn,
-            causal_conv1d_update,
-        )
+        conv_mod, conv_src = import_conv_ops()
+        causal_conv1d_fn = conv_mod.causal_conv1d_fn
+        causal_conv1d_update = conv_mod.causal_conv1d_update
     except ImportError as e:
-        print(f"[{KID}] causal_conv1d import 실패: {e}\n"
-              f"  → venv-k3 (또는 vLLM 설치 환경, RUNNER §1) 에서 실행할 것.",
+        print(f"[{KID}] causal_conv1d import 실패 (vendor/vllm 모두): {e}\n"
+              f"  → torch+triton venv(triton 티어, vendor 경로) 또는 venv-k3(RUNNER §1) 확인.",
               file=sys.stderr)
         sys.exit(report.EXIT_PRECOND)
+    r.add_evidence("kernel_import", conv_src)
 
     dev = "cuda"
     results: list[tolerance.NumericResult] = []
@@ -370,10 +389,9 @@ def run_sanitizer_gate(r: report.KernelReport, timeout: int = 1800) -> None:
 def sanitizer_arm() -> int:
     """축소 채널(3×1536): fn ragged([2,37], 짧은 seq 포함) + update 2스텝 — memcheck 대상."""
     import torch
-    from vllm.model_executor.layers.mamba.ops.causal_conv1d import (
-        causal_conv1d_fn,
-        causal_conv1d_update,
-    )
+    conv_mod, _src = import_conv_ops()        # vendor 우선 → vllm 폴백 (본 실행과 동일)
+    causal_conv1d_fn = conv_mod.causal_conv1d_fn
+    causal_conv1d_update = conv_mod.causal_conv1d_update
     dev = "cuda"
     seed = shapes.stable_seed(KID, "sanitizer_arm")
     g = torch.Generator().manual_seed(seed)

@@ -6,6 +6,9 @@
     (md5 de7ec6c04696f595bd79e83ce0943206, sha256 아래 PINNED_KERNEL_SHA256).
   - 호출부(vllm/v1/attention/backends/mla/triton_mla.py)는 브랜치에 DSpark(비인과
     draft) 분기만 추가 — causal decode 경로(우리 대상)는 main 과 동일.
+  - import 는 **vendor 우선**(kernel-kit/vendor/attn_ops/triton_decode_attention.py —
+    동일 핀 vendored 사본, vLLM 설치 불필요; sha 는 VENDORED_KERNEL_SHA256 로 별도 핀)
+    → 실패 시 vllm 폴백. 출처는 evidence.kernel.source.
 
 vLLM 결합 방식 (triton_mla.py `TritonMLAImpl.forward_mqa` L217-286 @ d223c900 1:1 재현):
   q            (B, 96, 576)  bf16   = absorbed q: [q_nope@W_UK (512) ‖ q_pe (64)]
@@ -83,6 +86,9 @@ PAGE_SIZE = 64                  # TRITON_MLA 요구 16 배수 (triton_mla.py sup
 PINS = {"vllm_main": "d223c900", "vllm_kimi_k3": "0498dc7e", "hf_kimi_k3": "9f62e4e9"}
 # 핀 커밋의 vllm/v1/attention/ops/triton_decode_attention.py (main=branch 동일 파일)
 PINNED_KERNEL_SHA256 = "b9823c65eba22d76abf64dad7d7d16a950f67471c86d6cb5b3e983aaf14381ac"
+# vendor 사본 sha (= 핀 원본 + 출처 헤더 2줄 + import 2행 상대화 — vendor/STUBS.md).
+# 원본 계보는 위 PINNED_ 로, vendor 사본 드리프트는 이 값으로 각각 감시한다.
+VENDORED_KERNEL_SHA256 = "2ab9887c2d42a5674da1724c07d18ab2c0a6c97aeb80c4af5cb30e4cf30ef1de"
 
 # PERF 판정 제외 임계 (사전등록): roofline < 30µs 면 launch 고정비 지배 → evidence 만
 PERF_JUDGE_MIN_ROOFLINE_US = 30.0
@@ -114,13 +120,22 @@ def _seq_lens_for(b: int, ctx: int) -> list[int]:
 # GPU 경로
 # ===========================================================================
 def _import_kernel():
+    """vendor(vLLM 불필요) 우선 → vllm 폴백. 출처·sha 핀 대조를 meta 로 반환."""
     import importlib
-    mod = importlib.import_module("vllm.v1.attention.ops.triton_decode_attention")
+    try:
+        mod = importlib.import_module("vendor.attn_ops.triton_decode_attention")
+        source, pin_sha = "vendor", VENDORED_KERNEL_SHA256
+        vendor_err = None
+    except Exception as e_v:
+        mod = importlib.import_module("vllm.v1.attention.ops.triton_decode_attention")
+        source, pin_sha = "vllm", PINNED_KERNEL_SHA256
+        vendor_err = f"{type(e_v).__name__}: {e_v}"[:300]
     with open(mod.__file__, "rb") as f:
         sha = hashlib.sha256(f.read()).hexdigest()
-    meta = {"module": mod.__name__, "file": mod.__file__, "sha256": sha,
-            "matches_pin": sha == PINNED_KERNEL_SHA256,
-            "pin_sha256": PINNED_KERNEL_SHA256}
+    meta = {"module": mod.__name__, "file": mod.__file__, "source": source,
+            "sha256": sha, "matches_pin": sha == pin_sha, "pin_sha256": pin_sha}
+    if vendor_err:
+        meta["vendor_import_error"] = vendor_err
     return mod.decode_attention_fwd, meta
 
 
@@ -251,8 +266,9 @@ def run_gpu(args, rep: report.KernelReport) -> int:
     })
     if not kmeta["matches_pin"]:
         rep.add_evidence("kernel_pin_warning",
-                         "설치본 커널 파일 sha256 이 핀(d223c900=0498dc7e 동일본)과 다름 — "
-                         "판정은 유효하되 커밋 드리프트를 기록")
+                         f"[source={kmeta['source']}] 커널 파일 sha256 이 핀과 다름 "
+                         "(vendor→VENDORED_KERNEL_SHA256, vllm→PINNED_KERNEL_SHA256 "
+                         "d223c900=0498dc7e 동일본) — 판정은 유효하되 드리프트를 기록")
 
     sm_count = torch.cuda.get_device_properties(0).multi_processor_count
 
