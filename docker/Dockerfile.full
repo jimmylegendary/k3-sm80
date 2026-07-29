@@ -1,0 +1,152 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# k3-sm80 kernel-kit — full 티어 (PLAN.md §S2 전달 모델)
+#
+# 목적: triton 티어 + vLLM kimi-k3 pin(0498dc7e) SM80 소스빌드.
+#   k05(Marlin W4A16 MoE, vLLM C-확장) + S4 통합용. k01~k07 전부 실행 가능.
+#   compute-sanitizer 동봉 → SANITIZER 게이트는 이 이미지에서 실제 실행된다.
+#
+# ★ 빌드에 GPU 불필요 ★ — nvcc 는 크로스컴파일러다. TORCH_CUDA_ARCH_LIST=8.0 으로
+#   타깃 아치를 고정하므로 GPU 없는 개발 호스트에서 빌드해 사내 A100 으로 반입한다.
+#
+# 구성 근거 (전부 vllm@0498dc7ea9204f1863b46515816f5d8d458e01e7 원문 fetch, 2026-07-29):
+#   - docker/Dockerfile: ARG CUDA_VERSION=13.0.3 / PYTHON_VERSION=3.12 /
+#     BUILD_BASE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 /
+#     FINAL_BASE=nvidia/cuda:${CUDA_VERSION}-base-ubuntu22.04 (+deadsnakes py3.12)
+#   - requirements/build/cuda.txt · requirements/cuda.txt: torch==2.13.0 (PyPI 기본 wheel =
+#     CUDA 13 빌드: requires_dist 에 nvidia-*-cu13 — PyPI JSON 확인) → nvcc 13.0 과 major 일치
+#     (RUNBOOK §6 "nvcc 와 torch.version.cuda major 불일치 상태로 빌드 금지" 충족)
+#   - 설치 순서는 a100-kit/RUNBOOK.md §3 과 동일: build/cuda.txt → cuda.txt → vllm 본체.
+#     (§3 의 `pip install -e .` 만 non-editable `pip install .` 로 변경 — 멀티스테이지에서
+#      runtime 스테이지로 /opt/venv 만 복사하기 위함. 그 외 경로·순서 동일.)
+#   - 베이스 실존 근거 (Docker Hub tags API + docker manifest inspect, 2026-07-29):
+#     nvidia/cuda:13.0.3-devel-ubuntu22.04 (3.69 GiB compressed) /
+#     nvidia/cuda:13.0.3-base-ubuntu22.04 (0.13 GiB compressed)
+# =============================================================================
+ARG CUDA_VERSION=13.0.3
+ARG PYTHON_VERSION=3.12
+
+#################### 1) builder — vLLM SM80 소스빌드 (GPU 불필요) ####################
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG PYTHON_VERSION
+# vLLM kimi-k3 pin — PR #50000 head. force-push 로 pin 소실 시 빌드는 명확히 실패한다
+# (이미지 재현성 원칙: RUNBOOK §3 의 "새 head 폴백"은 도커 빌드에서는 쓰지 않는다.
+#  드리프트 시 --build-arg VLLM_COMMIT=<새 해시> 로 명시 재지정 + 해시 기록).
+ARG VLLM_COMMIT=0498dc7ea9204f1863b46515816f5d8d458e01e7
+# A100 전용. Marlin MoE 는 CMake 가 "8.0+PTX;12.0f" 와 교집합을 취해 sm80 커널을 빌드
+# (recon/vllm-upstream.md (5)). FlashKDA 는 "will not compile" 경고 후 자동 스킵 = 정상.
+ARG TORCH_CUDA_ARCH_LIST=8.0
+# 빌드 병렬 — 개발 호스트 RAM 27GB 기준 nvcc 잡당 ~2GB(RUNBOOK §6) → 기본 8, build.sh 가 가드.
+ARG MAX_JOBS=8
+ARG NVCC_THREADS=2
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common curl git ca-certificates ccache \
+    && for i in 1 2 3; do add-apt-repository -y ppa:deadsnakes/ppa && break || \
+         { echo "deadsnakes 시도 $i 실패, 5s 후 재시도"; sleep 5; }; done \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python${PYTHON_VERSION} -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+
+# ---- 소스 확보 + 커밋 고정 (RUNBOOK §3 과 동일 절차) ----
+WORKDIR /src/vllm-k3
+RUN git clone https://github.com/vllm-project/vllm.git . \
+    && git fetch origin pull/50000/head:kimi-k3-pr \
+    && git checkout "${VLLM_COMMIT}" \
+    && git rev-parse HEAD | tee /opt/VLLM_COMMIT.txt
+
+# ---- 의존성 (RUNBOOK §3 순서: build/cuda.txt → cuda.txt) ----
+# cuda.txt 는 파일 내 --extra-index-url https://flashinfer.ai/whl/ 로 flashinfer-cubin 을 해결.
+# 공식 Dockerfile 과 동일하게 pytorch cu130 인덱스를 extra 로 추가(torchvision/torchaudio 의
+# cu13 변형 해석 보장; vllm 공식 Dockerfile L268-270 동일 패턴).
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -U pip \
+    && pip install -r requirements/build/cuda.txt \
+    && pip install -r requirements/cuda.txt \
+         --extra-index-url https://download.pytorch.org/whl/cu130
+
+# ---- vLLM 본체 빌드 (소요: 16코어 MAX_JOBS=8 기준 수 시간 — 로그로 진행 확인) ----
+ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
+    MAX_JOBS=${MAX_JOBS} \
+    NVCC_THREADS=${NVCC_THREADS} \
+    CCACHE_DIR=/root/.cache/ccache
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/root/.cache/ccache \
+    pip install . --no-build-isolation 2>&1 | tee /opt/build-k3.log \
+    && gzip -9 /opt/build-k3.log \
+    && pip freeze > /opt/pip-freeze.txt
+
+#################### 2) runtime — 산출물(/opt/venv)만 ####################
+FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu22.04
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG CUDA_VERSION
+ARG PYTHON_VERSION
+ARG VLLM_COMMIT
+LABEL org.opencontainers.image.source="https://github.com/jimmylegendary/k3-sm80" \
+      org.opencontainers.image.description="k3-sm80 S2 kernel-kit full tier: vLLM kimi-k3 SM80 source build (k01-k07 incl. k05 Marlin) + compute-sanitizer" \
+      org.opencontainers.image.revision="vllm@${VLLM_COMMIT}"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# 시스템 패키지: vllm 공식 Dockerfile vllm-base 스테이지 목록의 부분집합
+#   (ffmpeg 등 미디어 계열은 S2/S4 커널 검증에 불필요 → 제외; 필요 시 apt 로 추가)
+# + deadsnakes python3.12 (venv 의 심링크 대상)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common curl git ca-certificates \
+        libsm6 libxext6 libgl1 libnuma-dev numactl \
+    && for i in 1 2 3; do add-apt-repository -y ppa:deadsnakes/ppa && break || \
+         { echo "deadsnakes 시도 $i 실패, 5s 후 재시도"; sleep 5; }; done \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python${PYTHON_VERSION} python${PYTHON_VERSION}-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# CUDA 런타임 JIT 도구(vllm 공식 vllm-base 목록: nvcc/cudart/nvrtc/cuobjdump/curand/cublas)
+# + cuda-sanitizer = compute-sanitizer (S2 SANITIZER 게이트; env_check 가
+#   /usr/local/cuda*/bin/compute-sanitizer 를 탐색한다)
+RUN CUDA_VERSION_DASH=$(echo "${CUDA_VERSION}" | cut -d. -f1,2 | tr '.' '-') \
+    && apt-get update && apt-get install -y --no-install-recommends --allow-change-held-packages \
+        cuda-nvcc-${CUDA_VERSION_DASH} \
+        cuda-cudart-${CUDA_VERSION_DASH} \
+        cuda-nvrtc-${CUDA_VERSION_DASH} \
+        cuda-cuobjdump-${CUDA_VERSION_DASH} \
+        cuda-sanitizer-${CUDA_VERSION_DASH} \
+        libcurand-dev-${CUDA_VERSION_DASH} \
+        libcublas-dev-${CUDA_VERSION_DASH} \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /opt/venv /opt/venv
+COPY --from=build /opt/VLLM_COMMIT.txt /opt/build-k3.log.gz /opt/pip-freeze.txt /opt/vllm-build/
+
+# run_all.sh 는 PYTHON env 를 최우선으로 쓴다 → 컨테이너 python 을 명시 고정.
+# PATH 선두의 /opt/venv/bin 덕에 python3 폴백도 같은 인터프리터다.
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHON=/opt/venv/bin/python3
+
+# 빌드 게이트 (GPU 불필요한 검증만 — RUNBOOK §3 "빌드 검증"의 CPU 가능 부분):
+#   vllm import + 컴파일된 C-확장(.so) 존재 + kimi_k3 모델 코드 존재 + torch/cuda 버전 계약
+RUN python3 - <<'EOF'
+import glob, os
+import torch, triton, vllm
+assert torch.__version__.startswith("2.13.0"), f"torch {torch.__version__} != 2.13.0"
+assert (torch.version.cuda or "").startswith("13.0"), f"torch cuda {torch.version.cuda} != 13.0"
+base = os.path.dirname(vllm.__file__)
+sos = glob.glob(os.path.join(base, "**", "*.so"), recursive=True)
+assert sos, "vllm 컴파일 확장(.so) 0건 — 소스빌드 실패 의심"
+k3 = os.path.join(base, "models", "kimi_k3", "__init__.py")
+assert os.path.isfile(k3), "vllm/models/kimi_k3 없음 — kimi-k3 브랜치 pin 확인"
+print("gate ok:", "vllm", vllm.__version__, "| torch", torch.__version__,
+      "| triton", triton.__version__, "| .so", len(sos))
+EOF
+RUN compute-sanitizer --version || ls /usr/local/cuda*/bin/compute-sanitizer
+
+WORKDIR /work
+CMD ["bash"]

@@ -5,7 +5,7 @@
     "MISSING": 0,
     "PASS": 0
   },
-  "generated_utc": "2026-07-29T04:43:20+00:00",
+  "generated_utc": "2026-07-29T05:07:52+00:00",
   "invalid": {},
   "kernels": [
     {
@@ -86,6 +86,6 @@
       "overall": "INCOMPLETE"
     }
   ],
-  "report_dir": "/home/jimmy/repos/k3-sm80/kernel-kit/kernel-report",
+  "report_dir": "/work/kernel-kit/kernel-report",
   "s2_complete": false
 }

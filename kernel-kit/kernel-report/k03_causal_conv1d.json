@@ -2,18 +2,18 @@
   "env": {
     "compute_sanitizer": null,
     "cuda_available": false,
-    "host": "jimmy-SER",
+    "host": "f8d795ca75f8",
     "in_venv": false,
-    "numpy": "2.4.2",
+    "numpy": "2.5.1",
     "nvidia_smi": null,
     "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
-    "python": "3.14.3",
-    "python_exe": "/home/linuxbrew/.linuxbrew/opt/python@3.14/bin/python3.14",
-    "repo_commit": "0d54b19",
-    "torch": null,
+    "python": "3.12.3",
+    "python_exe": "/usr/bin/python3",
+    "repo_commit": "a4b69ce",
+    "torch": "2.13.0+cu126",
+    "torch_cuda": "12.6",
     "torch_cuda_arch_list": null,
-    "torch_import_error": "ModuleNotFoundError: No module named 'torch'",
-    "triton": null,
+    "triton": "3.7.1",
     "vllm": null
   },
   "evidence": {},
@@ -64,7 +64,7 @@
         },
         "verdict": {
           "gate": "PASS",
-          "path": "/home/jimmy/repos/k3-sm80/phase0/verdict.json",
+          "path": "/work/phase0/verdict.json",
           "pins": {
             "hat_schema": "98ea3f7",
             "hatir": "3a60d38",
@@ -112,9 +112,9 @@
   },
   "id": "k03_causal_conv1d",
   "meta": {
-    "created_utc": "2026-07-29T04:43:19+00:00",
+    "created_utc": "2026-07-29T05:07:47+00:00",
     "dry_run": true,
-    "duration_s": 0.003,
+    "duration_s": 0.002,
     "pins": {
       "hf": "moonshotai/Kimi-K3@9f62e4e9",
       "vllm_kimi_k3": "0498dc7e",

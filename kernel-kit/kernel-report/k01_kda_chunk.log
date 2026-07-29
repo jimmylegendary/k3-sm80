@@ -1,1 +1,1 @@
-{"id": "k01_kda_chunk", "overall": "INCOMPLETE", "gates": {"NUMERIC": "SKIP", "SANITIZER": "SKIP", "SHAPES": "SKIP", "PERF": "SKIP"}, "report": "/home/jimmy/repos/k3-sm80/kernel-kit/kernel-report/k01_kda_chunk.json"}
+{"id": "k01_kda_chunk", "overall": "INCOMPLETE", "gates": {"NUMERIC": "SKIP", "SANITIZER": "SKIP", "SHAPES": "SKIP", "PERF": "SKIP"}, "report": "/work/kernel-kit/kernel-report/k01_kda_chunk.json"}

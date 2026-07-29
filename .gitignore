@@ -1,2 +1,4 @@
 __pycache__/
 kernel-kit/k3-sm80-kernel-report-*.tgz
+docker/logs/
+*.tar.zst.part-*

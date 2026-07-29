@@ -34,4 +34,4 @@ k05_marlin_moe_w4a16     m1                      133.9µs/mem     PASS
 k06_dequant_bench        one_expert_w13                    -     PASS
 k07_situ_act             routed_inter3072_m32        0.3µs/mem     PASS
 timing selftest: PASS
-{"report_selftest": "PASS", "sample": "/home/jimmy/repos/k3-sm80/kernel-kit/kernel-report/selftest.sample.json", "validate_errors": []}
+{"report_selftest": "PASS", "sample": "/work/kernel-kit/kernel-report/selftest.sample.json", "validate_errors": []}
