@@ -1,7 +1,7 @@
 # S2 kernel-kit 집계
 
-- 생성: 2026-07-29T05:16:03+00:00 · 대상 7커널
-- 종합: PASS 0 / FAIL 0 / INCOMPLETE 7 / MISSING 0 → S2 완료(전 커널 PASS): 아니오
+- 생성: 2026-07-29T06:30:27+00:00 · 대상 6커널
+- 종합: PASS 0 / FAIL 0 / INCOMPLETE 6 / MISSING 0 → S2 완료(전 커널 PASS): 아니오
 
 | 커널 | 종합 | NUMERIC | SANITIZER | SHAPES | PERF |
 |---|---|---|---|---|---|
@@ -9,7 +9,6 @@
 | k02_kda_recurrent (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
 | k03_causal_conv1d (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
 | k04_mla_decode (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
-| k05_marlin_moe_w4a16 (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
 | k06_dequant_bench (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
 | k07_situ_act (dry) | **INCOMPLETE** | SKIP | SKIP | SKIP | SKIP |
 

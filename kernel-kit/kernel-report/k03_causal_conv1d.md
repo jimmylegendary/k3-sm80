@@ -1,7 +1,7 @@
 # k03_causal_conv1d — causal_conv1d fn/update (depthwise conv4 + SiLU, Triton)
 
 - 종합: **INCOMPLETE** (cpu-dry-run — 실커널 미실행)
-- 생성: 2026-07-29T05:15:56+00:00 · 소요 0.002s · repo beb7859
+- 생성: 2026-07-29T06:30:22+00:00 · 소요 0.002s · repo 7c5384a
 
 | 게이트 | 판정 | 사유 |
 |---|---|---|

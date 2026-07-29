@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # 커널 단독검증(S2 kernel-kit) 실행 — vLLM 서빙이 아니라 커널을 하나씩 참조구현과 대조한다.
 #
-# 사용:   bash run/20-kernel-test.sh [triton|full] [커널id ...]
+# 사용:   bash run/20-kernel-test.sh [triton|full] [--cpu-dry-run] [커널id ...]
 #         triton = k05 제외 전부(vLLM 불필요) / full = k01~k07 전부(k05 Marlin 포함)
 #         커널id 를 나열하면 그것만 부분 실행 (예: bash run/20-kernel-test.sh triton k01_kda_chunk)
+#         --cpu-dry-run = GPU 없이 배선만 검증(스모크용 — GPU 판정은 안 나옴)
 # 결과:   kernel-kit/kernel-report/ 에 커널별 4게이트(NUMERIC/SANITIZER/SHAPES/PERF) 판정 +
 #         반출용 kernel-kit/k3-sm80-kernel-report-<ts>.tgz 생성.
 #         exit 0 = FAIL 없음 / 1 = FAIL 존재(정상 — 특히 k05 crash 는 수집 목적) /
@@ -16,16 +17,29 @@ IMG="ghcr.io/jimmylegendary/k3-sm80-kernelkit:$TIER"
 docker image inspect "$IMG" >/dev/null 2>&1 \
   || { echo "[test] $IMG 없음 — 먼저: bash run/10-load-image.sh $TIER" >&2; exit 3; }
 
-if [[ $# -gt 0 ]]; then KERNELS="$*"
+DRY=""; ARGS=()
+for a in "$@"; do
+  [[ $a == --cpu-dry-run ]] && DRY="--cpu-dry-run" || ARGS+=("$a")
+done
+if [[ ${#ARGS[@]} -gt 0 ]]; then KERNELS="${ARGS[*]}"
 elif [[ $TIER == triton ]]; then
   KERNELS="k01_kda_chunk k02_kda_recurrent k03_causal_conv1d k04_mla_decode k06_dequant_bench k07_situ_act"
 else
   KERNELS=""   # 빈 값 = run_all 기본(전부, k05 포함)
 fi
 
-echo "[test] tier=$TIER kernels=${KERNELS:-<전부>}"
-docker run --rm --gpus all -v "$ROOT":/work ${KERNELS:+-e KERNELS="$KERNELS"} \
-  "$IMG" bash /work/kernel-kit/run_all.sh
+# GPU 플래그: dry-run 스모크는 GPU 없는 곳에서도 돌 수 있게 --gpus 생략
+GPUS="--gpus all"; [[ -n $DRY ]] && GPUS=""
+
+# ★ -u + HOME=/tmp 필수 (컨테이너 gate 와 동일 조건):
+#   - 컨테이너 기본 root 는 NFS root_squash/userns-remap 환경에서 마운트된 repo 에 쓰기 불가
+#     → kernel-report/ 생성 실패 = "permission denied ... env_check 내부 오류(rc=1)" (사내 실측)
+#   - 비root 로 돌면 $HOME 이 없으므로 torch/triton 캐시를 /tmp 로 보낸다
+echo "[test] tier=$TIER kernels=${KERNELS:-<전부>} ${DRY:+(dry-run)}"
+docker run --rm $GPUS -v "$ROOT":/work \
+  -u "$(id -u):$(id -g)" -e HOME=/tmp -e TRITON_CACHE_DIR=/tmp/.triton \
+  ${KERNELS:+-e KERNELS="$KERNELS"} \
+  "$IMG" bash /work/kernel-kit/run_all.sh $DRY
 rc=$?
 
 echo

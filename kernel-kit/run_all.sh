@@ -24,7 +24,17 @@ for a in "$@"; do
   esac
 done
 
-mkdir -p "$REPORT_DIR"
+mkdir -p "$REPORT_DIR" 2>/dev/null
+# 쓰기 가능성 선검사 — 컨테이너 root vs NFS root_squash/userns-remap 에서 여기가 첫 실패 지점.
+# 이걸 안 잡으면 env.json 리다이렉트 실패(rc=1)가 "env_check 내부 오류"로 위장된다(사내 실측).
+if ! touch "$REPORT_DIR/.write-probe" 2>/dev/null; then
+  echo "[run_all] FAIL: 리포트 디렉터리 쓰기 불가 — $REPORT_DIR" >&2
+  echo "[run_all]   원인 후보: 컨테이너를 root 로 실행 (NFS root_squash/userns-remap 환경)" >&2
+  echo "[run_all]   해결: run/20-kernel-test.sh 를 쓰거나, docker run 에 다음을 추가:" >&2
+  echo "[run_all]     -u \"\$(id -u):\$(id -g)\" -e HOME=/tmp -e TRITON_CACHE_DIR=/tmp/.triton" >&2
+  exit 3
+fi
+rm -f "$REPORT_DIR/.write-probe"
 
 # ---- python 선택: venv 자동 감지 (PYTHON > VIRTUAL_ENV > K3_WORK_DIR 의 venv) ----
 # RUNBOOK 규약: 작업 디렉터리 ~/k3-sm80-work (K3_WORK_DIR 로 변경 가능)에 venv-k3(소스빌드,
