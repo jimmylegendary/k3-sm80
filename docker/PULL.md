@@ -51,6 +51,11 @@ cat k3-sm80-kernelkit-full-*.tar.zst.part-* | unzstd | docker load
 `gh` 가 없으면 릴리스 페이지(웹)에서 part 파일들을 받아 같은 `cat | unzstd | docker load` 를 쓴다.
 (웹 다운로드 후 파일명이 바뀌지 않았는지 확인 — part 순서는 `part-aa`, `part-ab`, … 사전순.)
 
+주의(결합 오염 방지): `cat *.part-*` 는 글롭에 걸리는 **모든** 파일을 결합한다 — 이전에 받다 만
+파일이나 다른 날짜의 part 가 같은 디렉터리에 있으면 이미지가 손상된다. **빈 디렉터리에서**
+받고, 결합 전 `ls *.part-*` 목록이 `.sha256` 파일에 나열된 목록과 정확히 일치하는지 확인할 것.
+(push.sh 는 릴리스당 tier 1세트 불변식을 강제하지만, 로컬 잔재까지는 막지 못한다.)
+
 ## 3. 실행 (repo = /work 볼륨 마운트)
 
 ```bash

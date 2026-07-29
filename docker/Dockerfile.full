@@ -25,16 +25,19 @@
 # =============================================================================
 ARG CUDA_VERSION=13.0.3
 ARG PYTHON_VERSION=3.12
+# vLLM kimi-k3 pin — PR #50000 head. force-push 로 pin 소실 시 빌드는 명확히 실패한다
+# (이미지 재현성 원칙: RUNBOOK §3 의 "새 head 폴백"은 도커 빌드에서는 쓰지 않는다.
+#  드리프트 시 --build-arg VLLM_COMMIT=<새 해시> 로 명시 재지정 + 해시 기록).
+# ★ 전역 ARG: 스테이지 내 기본값은 다른 스테이지에 상속되지 않는다(runtime LABEL 이
+#   "vllm@" 로 비는 결함 실증됨) → 전역 선언 + 각 스테이지 재선언으로 상속.
+ARG VLLM_COMMIT=0498dc7ea9204f1863b46515816f5d8d458e01e7
 
 #################### 1) builder — vLLM SM80 소스빌드 (GPU 불필요) ####################
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04 AS build
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
-# vLLM kimi-k3 pin — PR #50000 head. force-push 로 pin 소실 시 빌드는 명확히 실패한다
-# (이미지 재현성 원칙: RUNBOOK §3 의 "새 head 폴백"은 도커 빌드에서는 쓰지 않는다.
-#  드리프트 시 --build-arg VLLM_COMMIT=<새 해시> 로 명시 재지정 + 해시 기록).
-ARG VLLM_COMMIT=0498dc7ea9204f1863b46515816f5d8d458e01e7
+ARG VLLM_COMMIT
 # A100 전용. Marlin MoE 는 CMake 가 "8.0+PTX;12.0f" 와 교집합을 취해 sm80 커널을 빌드
 # (recon/vllm-upstream.md (5)). FlashKDA 는 "will not compile" 경고 후 자동 스킵 = 정상.
 ARG TORCH_CUDA_ARCH_LIST=8.0

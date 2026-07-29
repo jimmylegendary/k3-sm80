@@ -1,11 +1,16 @@
 # kernel-kit RUNNER — S2 커널 단독 검증 사내 실행 절차
 
-> **환경이 안 잡힐 때(사전조건 미충족)**: `run_all.sh` 가 항목별 FAIL 표와 해결 명령을
-> 출력한다. 최다 원인 = venv 미활성(시스템 python 에 torch 없음). 자동 구성:
-> `bash ../a100-kit/bootstrap.sh --stage2 --yes` (또는 `AUTO_FIX=1 bash run_all.sh` 로
-> stage1 자동 구성). run_all.sh 는 `~/k3-sm80-work` 의 venv-k3/venv-probe 를 자동 감지한다.
+> **주 경로 = 도커 이미지** (2026-07-29 S2 전달 모델 변경, PLAN §S2): 사내에서는
+> pull(또는 load) → `docker run ... bash /work/kernel-kit/run_all.sh` 만 한다 —
+> 절차 전체는 **`docker/PULL.md`**. 이미지가 torch/triton(+full 은 vLLM 소스빌드·
+> compute-sanitizer)을 동봉하므로 venv 구성이 필요 없다.
+>
+> **대안(베어메탈 venv)에서 환경이 안 잡힐 때(사전조건 미충족)**: `run_all.sh` 가 항목별
+> FAIL 표와 해결 명령을 출력한다. 최다 원인 = venv 미활성(시스템 python 에 torch 없음).
+> 자동 구성: `bash ../a100-kit/bootstrap.sh --stage2 --yes` (또는 `AUTO_FIX=1 bash run_all.sh`
+> 로 stage1 자동 구성). run_all.sh 는 `~/k3-sm80-work` 의 venv-k3/venv-probe 를 자동 감지한다.
 
-작성: 2026-07-28 · 러너: Jimmy (사내 A100 노드) · 계약: `docs/PLAN.md` §S2
+작성: 2026-07-28 (2026-07-29 도커 주 경로로 개정) · 러너: Jimmy (사내 A100 노드) · 계약: `docs/PLAN.md` §S2
 핀: vLLM kimi-k3 `0498dc7e` / main `d223c900` / HF Kimi-K3 `9f62e4e9` (a100-kit RUNBOOK §0과 동일)
 
 ## 0. 무엇을 판정하는가
@@ -22,29 +27,49 @@
 게이트는 PASS/FAIL/SKIP(사유 필수) 3값, **커널 종합 = 4게이트 all-PASS**.
 FAIL/CRASH도 버리는 결과가 아니다 — 특히 k05(#35922)는 crash 재현 로그가 **S3 입력물**이다.
 
-## 1. 사전조건 — a100-kit RUNBOOK 환경 재사용
+## 1. 사전조건 — 주 경로 = 도커 이미지 (`docker/PULL.md`)
 
-새 환경을 만들지 말 것. `a100-kit/RUNBOOK.md` §1(노드 점검) → §3(Stage 2 `venv-k3` 소스빌드)를
-그대로 재사용한다. kernel-kit 는 **Stage 2 venv-k3 를 기본 환경**으로 한다
-(K3 전용 KDA Triton ops `vllm.models.kimi_k3.nvidia.ops...` 가 이 브랜치에만 있음).
-실행 시점: `a100-kit/DECISION-TREE.md` 의 S1 실행 순서(프로브→소스빌드→pytest) **직후 같은
-세션에서 이어 도는 것이 표준** — S1 이 venv-k3 와 핀 브랜치를 이미 준비해 둔 상태다.
+**주 경로**: 새 환경을 만들지 말 것 — 이미지가 환경이다. `docker/PULL.md` §0(사전조건:
+docker + nvidia-container-toolkit + repo clone) → §1/§2(pull 또는 release load)만 하면 된다.
+k01~k04·k07 커널 소스는 `kernel-kit/vendor/` 로 vendor화되어 **vLLM 설치 없이** torch+triton
+만으로 돈다(k05 만 vLLM C-확장 → full 이미지가 흡수).
 
-| 커널 | 필요한 환경 | 비고 |
+| 커널 | 필요한 이미지 | 비고 |
 |---|---|---|
-| k01/k02/k03 (KDA·conv) | **venv-k3 (Stage 2)** | K3 vendored Triton ops. Stage 1로 돌릴 땐 main vendored 사본(`vllm.third_party.flash_linear_attention`)이라 게이트 수식(fused gate)이 다름 — k3 사본 기준이 정본 |
-| k04 (MLA decode) | venv-k3 권장 (venv-probe 가능) | TRITON_MLA 커널은 양쪽에 존재 |
-| k05 (Marlin MoE) | venv-k3 권장 (venv-probe 가능) | `_moe_C` sm80 빌드 필요 — Stage 2 소스빌드가 보장 |
-| k06/k07 | 아무 쪽 | torch+triton만 있으면 됨 |
+| k01~k04·k06·k07 | `:triton` 이상 | vendored 커널(`vendor/fla_kda` 등, pin 0498dc7e 사본) — vLLM 불필요 |
+| k05 (Marlin MoE) | **`:full` 만** | `_moe_C` sm80 C-확장 = vLLM 소스빌드 필요 |
+| SANITIZER 게이트 | **`:full` 만** | compute-sanitizer 동봉은 full 뿐 — triton 에서는 SKIP(사유 기록) |
 
-추가 확인(둘 다 RUNBOOK §1에 이미 포함):
+**대안(베어메탈 venv — 도커 불가 시)**: `a100-kit/RUNBOOK.md` §0.5 대안 절차(§1 노드 점검 →
+§3 Stage 2 `venv-k3` 소스빌드)를 재사용한다. 이때 kernel-kit 는 **venv-k3 를 기본 환경**으로
+한다(K3 전용 KDA Triton ops 가 이 브랜치에만 있음; venv-probe/Stage 1 은 main vendored 사본이라
+게이트 수식(fused gate)이 다름 — k3 기준이 정본. k05 는 Stage 2 소스빌드 필수).
+실행 시점: `a100-kit/DECISION-TREE.md` 의 S1 실행 순서 직후 같은 세션에서 이어 도는 것이 표준.
+
+추가 확인(도커 경로는 PULL.md §0에 포함):
 
 ```bash
 nvidia-smi --query-gpu=name,compute_cap --format=csv   # A100, 8.0
-which compute-sanitizer || ls /usr/local/cuda*/bin/compute-sanitizer   # 없으면 SANITIZER=SKIP으로 진행됨
+# (베어메탈일 때만) which compute-sanitizer — 없으면 SANITIZER=SKIP으로 진행됨
 ```
 
 ## 2. 실행
+
+**주 경로 (도커 — 상세·부분 실행·비루트 옵션은 `docker/PULL.md` §3)**:
+
+```bash
+cd <repo>   # /work 로 마운트됨 — 결과 tgz 는 호스트 kernel-kit/ 에 남는다
+
+docker run --rm --gpus all -v "$PWD":/work \
+  ghcr.io/jimmylegendary/k3-sm80-kernelkit:full \
+  bash /work/kernel-kit/run_all.sh                # 전체 (k01..k07 순차 + 집계 + tar)
+
+docker run --rm --gpus all -v "$PWD":/work -e KERNELS="k05_marlin_moe_w4a16" \
+  ghcr.io/jimmylegendary/k3-sm80-kernelkit:full \
+  bash /work/kernel-kit/run_all.sh                # 부분 재실행 (FAIL 커널만 재시도 등)
+```
+
+**대안 (베어메탈 venv)**:
 
 ```bash
 cd <repo>/kernel-kit
@@ -71,7 +96,7 @@ bash run_all.sh --cpu-dry-run                     # (호스트용) 참조·판�
 | k04 MLA decode | 3–6분 | +5–10분 | ctx 128k KV(b32 기준 ~4.8GB) 할당 포함. bf16 KV 단일 arm(SM80은 fp8 KV 불가 — 리포트 evidence.fp8_kv_arm). PERF는 roofline≥30µs 4케이스 판정(b1_ctx8k는 launch 지배 → evidence만) |
 | k05 Marlin MoE | 20–50분 | +30–120분 | **crash 예상 경로**. 케이스=독립 프로세스(사다리 E 8→64→256→896, K 512→3584→7168) — 한 crash가 전체를 안 죽임. 시간은 E=896 가중치 생성·양자화가 지배(케이스당 수 분). sanitizer는 가중치 빌드까지 계측되어 매우 느림 — hang ≠ 실패, 기다릴 것 |
 | k06 dequant bench | 3–6분 | +1–3분 (소형 arm) | 측정 산출형 — CV≤10%면 PASS. `calibration-k06-dequant.json`(dequant_ops/param)이 phase0 재보정 입력 |
-| k07 SiTU 참조 | 1분 | +1–2분 | arm=native(언퓨즈드)+fused(`_C.situ_and_mul`, venv-k3 존재 시). PERF 기본 판정=fused arm·m8192 케이스만(floor 0.30); `--no-perf` 시 정책상 SKIP(성능 후순위) |
+| k07 SiTU 참조 | 1분 | +1–2분 | arm=native(언퓨즈드)+fused(`_C.situ_and_mul`, vLLM 빌드 존재 시 = `:full` 이미지/venv-k3). PERF 기본 판정=fused arm·m8192 케이스만(floor 0.30); `--no-perf` 시 정책상 SKIP(성능 후순위) |
 
 전체 첫 실행 대략 30–60분(autotune 포함), 재실행 ~15분.
 sanitizer arm은 각 하네스가 축소 shape로 자체 실행한다(전 shape sanitizer는 비용상 비표준).
@@ -102,7 +127,7 @@ git add kernel-kit/kernel-report && git commit -m "kernel-kit: A100 S2 실행 �
 
 | 증상 | 조치 |
 |---|---|
-| `env_check` exit 2 (GPU 미인식) | RUNBOOK §6.1 (드라이버/venv). kernel-kit 자체는 손대지 말 것 |
+| `env_check` exit 2 (GPU 미인식) | 컨테이너면 대부분 `--gpus all` 누락/드라이버 부족 — `docker/PULL.md` §4. 베어메탈이면 RUNBOOK §6.1 (드라이버/venv). kernel-kit 자체는 손대지 말 것 |
 | capability ≠ (8,0) FAIL | 다른 GPU에 잡힘 — `CUDA_VISIBLE_DEVICES`로 A100 지정. 타 아치 결과는 판정 무효 |
 | sanitizer 미발견 SKIP | CUDA 툴킷 `bin/` PATH 추가 (RUNBOOK §1.5). SKIP인 채로는 커널 종합 PASS 불가 |
 | k01 autotune이 매우 느림 | 정상(최초 1회). `TRITON_CACHE_DIR`를 홈에 고정하면 재실행 단축 |

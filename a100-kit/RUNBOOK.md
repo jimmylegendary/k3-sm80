@@ -24,7 +24,27 @@
 checkout 실패(force-push로 커밋 소실) 시 `git fetch origin pull/50000/head`로 새 head를 받되
 **새 커밋 해시를 결과 로그에 기록**하고 DECISION-TREE의 "브랜치 드리프트" 절차를 따른다.
 
-## 0.5 지름길 — 원커맨드 부트스트랩 (수동 절차 §2/§3의 자동화, 멱등)
+## 0.5 실행 경로 선택 — **주 경로 = 도커 이미지 (`docker/PULL.md`)**, venv 는 대안
+
+**주 경로 (2026-07-29 S2 전달 모델 변경, PLAN §S2)**: 빌드는 전부 개발 호스트에서 끝났고
+사내에서는 **pull(또는 release tar load) → run** 만 한다. 절차 전체 = **`docker/PULL.md`**.
+Stage 2 소스빌드 상당(vLLM kimi-k3 pin + compute-sanitizer)은 `:full` 이미지가 이미 동봉 —
+아래 §2/§3 의 venv·소스빌드 수동 절차가 필요 없다.
+
+```bash
+# 사내 노드 (상세·폴백은 docker/PULL.md):
+docker pull ghcr.io/jimmylegendary/k3-sm80-kernelkit:full
+docker run --rm --gpus all -v "$PWD":/work \
+  ghcr.io/jimmylegendary/k3-sm80-kernelkit:full bash /work/kernel-kit/run_all.sh
+```
+
+이미지·프로브 대응: kernel-kit(S2) 7종 전부 + **Stage 2 프로브**(probe_kda_fla `--impl k3`,
+probe_k3_modules)는 `:full` 이미지 안에서 그대로 실행된다. 단 **Stage 1 프로브**(probe_35922,
+probe_kda_fla `--impl main`)는 릴리스 wheel `vllm==0.26.0`(torch 2.11) 판정이 전제라
+이미지 vllm(kimi-k3 pin 소스빌드)로 대체 불가 — 이 경우에만 아래 대안 경로의 venv-probe 를 쓴다.
+
+**대안 (베어메탈 venv — docker/nvidia-container-toolkit 불가, 이미지 반입 실패, 또는 Stage 1 프로브)**:
+원커맨드 부트스트랩(수동 절차 §2/§3의 자동화, 멱등):
 
 ```bash
 bash a100-kit/bootstrap.sh --stage1 --yes   # venv-probe: vllm==0.26.0 wheel (분 단위)
@@ -35,6 +55,8 @@ bash a100-kit/bootstrap.sh --stage2 --yes   # venv-k3: kimi-k3 pin 소스빌드 
 ```
 
 수동으로 단계별 확인이 필요하면 아래 §1~§3 을 따른다. bootstrap 은 §2/§3 과 같은 pin 을 쓴다.
+(§1~§3·§6 의 venv/빌드 서술은 이 **대안 경로** 기준이다 — 도커 주 경로에서는 §1.1 GPU/드라이버
+점검과 `docker/PULL.md` 만 보면 된다.)
 
 ## 1. 사전조건 점검 (노드에서 가장 먼저 실행)
 

@@ -65,3 +65,33 @@
 
 후속 라운드(2026-07-28, 오케스트레이터 직접 수정): #4·#5·#8 수정 완료 — 호스트 게이트(py_compile 3.11/3.12 + run_all --cpu-dry-run exit 0) green 재확인. 잔여 백로그 = #6잔존·#9·#10·#11 (S2 판정 결과를 뒤집는 항목 아님)
 (#5 만 GPU PERF 위양성 가능성이 있어 사내 실행 전 처리 권장).
+
+---
+
+# 라운드 2 — vendor화·도커화 (2026-07-29, PLAN §S2 전달 모델 변경)
+
+배경: 사내 vllm pip 설치 실패 + "커널은 torch 로 단독 테스트해야" 지적 → S2 전달 모델을
+"사내 pip 설치"에서 "**커널 vendor화 + 도커 이미지 반입**"으로 변경(PLAN §S2, Jimmy 지시).
+
+## 산출물 (커밋 체인)
+
+| 커밋 | 내용 |
+|---|---|
+| `a4b69ce` | **vendor화** — pin `0498dc7e` 원본에서 `kernel-kit/vendor/` 로 커널 소스 복사(출처·커밋·라이선스 헤더): `fla_kda/`(chunk·chunk_intra·chunk_intra_token_parallel·fused_recurrent), `fla_common/`(chunk_delta_h·cumsum·index·l2norm·op·utils), `mamba_ops/`(causal_conv1d), `attn_ops/`(triton_decode_attention), `situ.py`, `_vllm_shims/`. `vendor/__init__.py` = PEP 562 lazy `_EXPORTS` **13심볼**(k01·k02 KDA 9종 + k03 conv 2종 + k04 decode_attention_fwd + k07 situ_and_mul_native). `check_no_vllm.py` = vendor 트리 vllm import 0건 게이트 |
+| `beb7859` | **도커 2티어 + 배포 2경로** — `docker/Dockerfile.triton`(torch 2.13.0+cu126, vLLM 없음; 빌드게이트 + vllm 존재 시 실패하는 역게이트), `docker/Dockerfile.full`(멀티스테이지 vLLM kimi-k3 `0498dc7e` SM80 소스빌드 + compute-sanitizer; GPU 불필요 크로스컴파일), `build.sh`/`push.sh`(ghcr + release 분할 tar 폴백)/`PULL.md`(사내 반입 절차) |
+| `6d44e19` | **컨테이너 gate PASS** (`docker/GATE-RESULT.md`) — triton 이미지(`sha256:560f65bc…`) 안에서 ① `run_all.sh --cpu-dry-run` **exit 0**, 집계 PASS 0/FAIL 0/**INCOMPLETE 7**/MISSING 0(dry-run 상한 준수, PASS 사칭 없음) ② vendor import **13/13 callable** + `sys.modules` 에 vllm* 0건(vLLM 없이 torch+triton 만으로 전 체인 실로드) ③ `check_no_vllm.py` green(24파일) |
+
+## 실행 경로 변경 (본 라운드 문서 동기화)
+
+- 주 경로 = **도커** (`docker/PULL.md`): RUNBOOK §0.5·RUNNER §1/§2·DECISION-TREE 실행 전제를
+  도커 기준으로 개정, bootstrap/venv 는 "대안(베어메탈)"으로 강등.
+- 판정 체계 불변: 4게이트(NUMERIC/SANITIZER/SHAPES/PERF)·리포트 스키마·반출 tgz 루프 그대로.
+  SANITIZER 게이트 실행 조건만 명시화 — compute-sanitizer 는 `:full` 이미지에만 동봉.
+
+## 잔여 리스크 (이 라운드 종료 시점)
+
+- **full 이미지 미빌드** — 컨테이너 gate 는 triton 티어만 실증됨. full 은 수 시간 소요
+  (vLLM SM80 소스빌드)라 별도 실행 필요; k05(Marlin)·SANITIZER 게이트는 full 에서만 성립.
+- full 의 compute-sanitizer PATH 인식(`env_check` 탐색 경로)은 빌드 후 게이트(L149)로 확인
+  예정 — 실패 시 `/usr/local/cuda*/bin` 심링크 보정.
+- GPU 실측은 사내 A100 에서만 가능 — dry-run 상한(INCOMPLETE)까지가 호스트 실증 한계.

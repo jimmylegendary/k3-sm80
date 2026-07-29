@@ -58,8 +58,8 @@ WORK="${TMPDIR:-/tmp}/k3-sm80-push"
 mkdir -p "$WORK"
 command -v zstd >/dev/null || { echo "[push] zstd 없음 (apt install zstd)" >&2; exit 3; }
 
-# 디스크 가드: 압축 이미지(최대 ~10GB/티어)를 임시로 둘 공간
-avail_gb=$(( $(df -k "$WORK" | awk 'NR==2{print $4}') / 1024 / 1024 ))
+# 디스크 가드: 압축 이미지(최대 ~10GB/티어)를 임시로 둘 공간 (-P: 장치명이 길어도 1행 보장)
+avail_gb=$(( $(df -Pk "$WORK" | awk 'NR==2{print $4}') / 1024 / 1024 ))
 (( avail_gb < 15 )) && { echo "[push] $WORK 여유 ${avail_gb}GB < 15GB — 공간 확보 후 재시도" >&2; exit 3; }
 
 if ! gh release view "$RELEASE_TAG" -R "$REPO_SLUG" >/dev/null 2>&1; then
@@ -79,6 +79,14 @@ for tier in $TIERS; do
     echo "[push] $tier: $base.part-* 이미 업로드됨 — skip (재업로드는 FORCE=1)"
     continue
   fi
+  # 스테일 자산 제거(릴리스당 tier 1세트 불변식): 재업로드에서 part 수가 줄거나
+  # 날짜가 달라지면 이전 part 가 남아 PULL.md 의 'cat *.part-*' 결합을 손상시킨다 —
+  # 같은 tier prefix 의 기존 자산(날짜 불문, part/sha256 전부)을 업로드 전에 지운다.
+  while IFS= read -r stale; do
+    [[ -z "$stale" ]] && continue
+    echo "[push]   스테일 자산 제거: $stale"
+    gh release delete-asset "$RELEASE_TAG" "$stale" -R "$REPO_SLUG" -y
+  done < <(grep -E "^k3-sm80-kernelkit-$tier-" <<<"$existing_assets" || true)
   echo "[push] ── $tier: save|zstd|split (스트리밍, 중간 tar 미생성)"
   rm -f "$WORK/$base.part-"* "$WORK/$base.sha256"
   docker save "$IMG:$tier" | zstd -T0 -8 | split -b 1900M - "$WORK/$base.part-"
