@@ -57,6 +57,12 @@ else PY="python3"; fi
 echo "[run_all] kit=$KIT_DIR report=$REPORT_DIR verdict=$VERDICT mode=${DRY:-gpu} python=$PY"
 
 # ---- 0) 사전조건 (env_check가 판정·메시지 담당) --------------------------------
+# python 이 파일을 못 열면 rc=2 인데 이는 사전조건 미충족(rc=2)과 겹친다 — 먼저 실재 확인
+if [[ ! -f "$KIT_DIR/common/env_check.py" ]]; then
+  echo "[run_all] FAIL: $KIT_DIR/common/env_check.py 없음 — 마운트/클론 문제 (GPU 문제 아님)." >&2
+  echo "[run_all]   run/20-kernel-test.sh 로 실행하면 preflight 가 원인을 구분해 준다." >&2
+  exit 3
+fi
 "$PY" "$KIT_DIR/common/env_check.py" --json $DRY > "$REPORT_DIR/env.json"
 rc=$?
 if [[ $rc -eq 2 && "${AUTO_FIX:-0}" == "1" && -z "$DRY" ]] \

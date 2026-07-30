@@ -17,6 +17,25 @@ IMG="ghcr.io/jimmylegendary/k3-sm80-kernelkit:$TIER"
 docker image inspect "$IMG" >/dev/null 2>&1 \
   || { echo "[test] $IMG 없음 — 먼저: bash run/10-load-image.sh $TIER" >&2; exit 3; }
 
+# ---- preflight: 어느 repo 를 쓰는지 + 클론 완전성 + 컨테이너 마운트 가시성 -------
+# (사내 실측 2026-07-30: env_check.py 부재 → python rc=2 → 'GPU 사전조건 미충족' 오표시.
+#  원인 3후보 — 다른 디렉터리에서 실행 / 클론 불완전 / 원격 docker 데몬의 빈 마운트 —
+#  를 여기서 구분해 정확한 메시지로 알린다.)
+echo "[test] repo=$ROOT commit=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo '(git repo 아님!)')"
+for f in kernel-kit/run_all.sh kernel-kit/common/env_check.py kernel-kit/vendor/__init__.py; do
+  if [[ ! -f "$ROOT/$f" ]]; then
+    echo "[test] FAIL: $ROOT/$f 없음 — 이 디렉터리는 완전한 클론이 아니다." >&2
+    echo "  조치: cd <재클론한 k3-sm80 루트> 에서 실행했는지 확인. git status / 재클론 권장." >&2
+    exit 3
+  fi
+done
+if ! docker run --rm -v "$ROOT":/work "$IMG" test -f /work/kernel-kit/common/env_check.py; then
+  echo "[test] FAIL: 호스트엔 파일이 있는데 컨테이너 /work 마운트에선 안 보인다." >&2
+  echo "  1순위: docker 데몬이 원격(-v 는 데몬 쪽 경로를 마운트) — 확인: docker context ls; echo \$DOCKER_HOST" >&2
+  echo "  2순위: 마운트 경로 권한(NFS)/SELinux — 확인: ls -la $ROOT/kernel-kit/common/" >&2
+  exit 3
+fi
+
 DRY=""; ARGS=()
 for a in "$@"; do
   [[ $a == --cpu-dry-run ]] && DRY="--cpu-dry-run" || ARGS+=("$a")
