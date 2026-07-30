@@ -1,20 +1,20 @@
 {
   "env": {
-    "compute_sanitizer": "/usr/local/cuda/bin/compute-sanitizer",
+    "compute_sanitizer": null,
     "cuda_available": false,
-    "host": "a34bf4d9fae4",
-    "in_venv": true,
-    "numpy": "2.3.5",
+    "host": "3c5adae56f39",
+    "in_venv": false,
+    "numpy": "2.5.1",
     "nvidia_smi": null,
-    "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.35",
-    "python": "3.12.13",
-    "python_exe": "/opt/venv/bin/python3",
-    "repo_commit": "d00c7d5",
-    "torch": "2.13.0+cu130",
-    "torch_cuda": "13.0",
+    "os": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "python_exe": "/usr/bin/python3",
+    "repo_commit": "1e24e34",
+    "torch": "2.13.0+cu126",
+    "torch_cuda": "12.6",
     "torch_cuda_arch_list": null,
     "triton": "3.7.1",
-    "vllm": "0.26.1rc1.dev25+g0498dc7ea"
+    "vllm": null
   },
   "evidence": {
     "dry_run": {
@@ -87,14 +87,16 @@
   },
   "id": "k07_situ_act",
   "meta": {
-    "created_utc": "2026-07-29T07:50:56+00:00",
+    "created_utc": "2026-07-30T05:44:42+00:00",
     "dry_run": true,
-    "duration_s": 0.002,
+    "duration_s": 0.003,
     "pins": {
       "hf_kimi_k3": "9f62e4e9",
       "vllm_kimi_k3": "0498dc7e",
       "vllm_main": "d223c900"
-    }
+    },
+    "run_id": "20260730T054430Z",
+    "tier": "triton"
   },
   "overall": "INCOMPLETE",
   "schema_version": "s2-kernel-report/v1"

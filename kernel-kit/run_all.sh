@@ -39,6 +39,10 @@ rm -f "$REPORT_DIR/.write-probe"
 # ---- python 선택: venv 자동 감지 (PYTHON > VIRTUAL_ENV > K3_WORK_DIR 의 venv) ----
 # RUNBOOK 규약: 작업 디렉터리 ~/k3-sm80-work (K3_WORK_DIR 로 변경 가능)에 venv-k3(소스빌드,
 # 우선) / venv-probe(Stage1 wheel) — activate 없이 실행해도 여기서 자동으로 잡는다.
+# 실행 식별 — 리포트에 각인해 혼합/stale 판독을 막는다 (run/20 이 K3_TIER 를 넘긴다)
+export K3_RUN_ID="${K3_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
+export K3_TIER="${K3_TIER:-unset}"
+
 WORK="${K3_WORK_DIR:-$HOME/k3-sm80-work}"
 if [[ -n "${PYTHON:-}" ]]; then PY="$PYTHON"
 elif [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/python3" ]]; then

@@ -62,6 +62,7 @@ def build(report_dir: str) -> list[str]:
     lines.append(_short(envs, MAXW))
 
     counts = {"PASS": 0, "FAIL": 0, "INCOMPLETE": 0, "MISSING": 0}
+    stamps: dict[str, list[str]] = {}      # run_id/tier → 커널 목록 (stale 혼합 감지)
     i = 0
     for fn in sorted(os.listdir(report_dir)) if os.path.isdir(report_dir) else []:
         if not (fn.startswith("k0") and fn.endswith(".json")):
@@ -77,6 +78,9 @@ def build(report_dir: str) -> list[str]:
                 for g in GATES)                      # 예: "NPSPHPFP" = N:P S:P H:P F:P
             overall = d.get("overall", "?")
             counts[overall] = counts.get(overall, 0) + 1
+            mt = d.get("meta", {}) or {}
+            stamps.setdefault(f"{mt.get('run_id','unset')}/{mt.get('tier','unset')}",
+                              []).append(kid)
             tail = _diag(d) if overall != "PASS" else ""
             lines.append(_short(f"R{i} {kid} {gs} {ABBR.get(overall, overall)}"
                                 + (f" | {tail}" if tail else ""), MAXW))
@@ -85,6 +89,11 @@ def build(report_dir: str) -> list[str]:
     lines.append(_short(
         f"R9 sum PASS={counts.get('PASS',0)} FAIL={counts.get('FAIL',0)} "
         f"INC={counts.get('INCOMPLETE',0)}", MAXW))
+    if len(stamps) > 1:
+        newest = max(stamps)                       # run_id 는 타임스탬프 → 사전순 = 시간순
+        stale = [f"{k.split('/')[1]}:{','.join(v)}" for k, v in stamps.items() if k != newest]
+        lines.append(_short(f"R! 혼합실행 경고 — 최신={newest}, 이전실행 결과 잔존: "
+                            f"{'; '.join(stale)} (해당 커널 판정은 이 스윕 것이 아님)", MAXW))
     return lines
 
 

@@ -98,6 +98,11 @@ class KernelReport:
                 "dry_run": self.dry_run,
                 "duration_s": round(dur, 3),
                 "pins": self.pins,
+                # 실행 식별 — 리포트 디렉터리는 실행 간 누적되므로 티어가 다른 실행 결과가
+                # 섞여 오판독을 유발한다(2026-07-30 실측: triton 티어의 k02 sanitizer SKIP 이
+                # full 티어 스윕 결과로 오해됨). relay/aggregate 가 이 값으로 stale 을 표시한다.
+                "run_id": os.environ.get("K3_RUN_ID", "unset"),
+                "tier": os.environ.get("K3_TIER", "unset"),
             },
         }
 

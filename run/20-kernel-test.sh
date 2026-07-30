@@ -38,6 +38,7 @@ GPUS="--gpus all"; [[ -n $DRY ]] && GPUS=""
 echo "[test] tier=$TIER kernels=${KERNELS:-<전부>} ${DRY:+(dry-run)}"
 docker run --rm $GPUS -v "$ROOT":/work \
   -u "$(id -u):$(id -g)" -e HOME=/tmp -e TRITON_CACHE_DIR=/tmp/.triton \
+  -e K3_TIER="$TIER" -e K3_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)" \
   ${KERNELS:+-e KERNELS="$KERNELS"} \
   "$IMG" bash /work/kernel-kit/run_all.sh $DRY
 rc=$?
