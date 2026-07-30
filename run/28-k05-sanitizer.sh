@@ -34,12 +34,15 @@ for run in (ev.get("runs") or []):
     n += 1
     L(f"S3.{n} case={run.get('case')} status={run.get('status')} rc={run.get('rc')} "
       f"class={run.get('class')} {run.get('duration_s')}s")
-    tail = ((run.get("evidence") or {}).get("tail") or "")
+    rev = run.get("evidence") or {}
+    tail = rev.get("san_excerpt") or rev.get("tail") or ""   # excerpt(오류 블록 원문) 우선
     if run.get("status") != "FAIL" or not tail:
+        if run.get("status") == "FAIL":
+            L(f"S4.{n} (오류 블록 미보존 — git pull 후 k05 재실행 필요: 구버전 리포트)")
         continue
     # 오류 종류
     kinds = {}
-    for m in re.finditer(r"(Invalid|Illegal)[a-z ]*?(read|write|access)[a-z ]*(of size (\d+))?", tail):
+    for m in re.finditer(r"(Invalid|Illegal)[a-z_ ]*?(read|write|access)[a-z_ ]*(of size (\d+))?", tail):
         kinds[m.group(0).strip()] = kinds.get(m.group(0).strip(), 0) + 1
     for k, c in sorted(kinds.items(), key=lambda x: -x[1])[:3]:
         L(f"S4.{n} x{c} {k}")

@@ -352,6 +352,11 @@ def spawn_case(case: str, args, extra_env: dict | None = None,
            "duration_s": dur, "sanitizer": bool(sanitizer),
            "result_json": out_json if result else None,
            "stdout_markers": lp_lines[-8:], "tail": out_txt[-1800:]}
+    if sanitizer:
+        # memcheck 오류 블록은 실행 초반에 찍히고 뒤에 앱 로그가 밀려와 tail 에서 유실된다
+        # (2026-07-30 실측: run/28 의 S4~S7 공백) — '=========' 프리픽스 줄만 앞에서부터 보존.
+        san_lines = [ln for ln in out_txt.splitlines() if ln.startswith("=========")]
+        rec["san_excerpt"] = "\n".join(san_lines[:150])[:9000]
     if result:
         rec["result"] = result
     return rec
@@ -371,6 +376,8 @@ def sanitizer_arm(args, first_crash: str | None) -> tuple[str, str, dict]:
         st, rs, ev = report.sanitizer_gate_from_output(
             rec["tail"], cmd=f"compute-sanitizer memcheck {c}",
             returncode=rec["rc"] if rec["class"] != "timeout" else None)
+        if rec.get("san_excerpt"):
+            ev["san_excerpt"] = rec["san_excerpt"]   # 오류 블록 원문(위반 커널·주소·스택)
         if rec["class"] == "timeout":
             st, rs = "SKIP", f"sanitizer 하 {c} timeout({rec['duration_s']}s) — 판독 불가, 재시도 필요"
         runs.append({"case": c, "status": st, "reason": rs, "rc": rec["rc"],
