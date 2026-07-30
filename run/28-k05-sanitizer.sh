@@ -40,6 +40,15 @@ for run in (ev.get("runs") or []):
         if run.get("status") == "FAIL":
             L(f"S4.{n} (오류 블록 미보존 — git pull 후 k05 재실행 필요: 구버전 리포트)")
         continue
+    # 원문 머리 — 포맷 불문 가장 결정적 (백트레이스 프레임 제외 첫 8줄)
+    raws = [ln[10:].strip() for ln in tail.splitlines()
+            if ln.startswith("=========") and not ln.lstrip("= ").startswith("#")
+            and ln.strip() != "========="]
+    for j, ln in enumerate([x for x in raws if x][:8]):
+        L(f"S4r.{n}.{j} {ln}")
+    ec = (rev.get("error_count") if isinstance(rev.get("error_count"), int) else None)
+    if ec == 0 and run.get("rc") not in (0, None):
+        L(f"S4!.{n} 모순: 요약 0건인데 rc={run.get('rc')} — API 오류/도구 이슈 후보 (raw 참조)")
     # 오류 종류
     kinds = {}
     for m in re.finditer(r"(Invalid|Illegal)[a-z_ ]*?(read|write|access)[a-z_ ]*(of size (\d+))?", tail):

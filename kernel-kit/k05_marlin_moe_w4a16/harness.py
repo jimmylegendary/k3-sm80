@@ -311,7 +311,8 @@ def _classify_rc(rc: int) -> str:
 
 
 def spawn_case(case: str, args, extra_env: dict | None = None,
-               sanitizer: str | None = None) -> dict:
+               sanitizer: str | None = None,
+               san_flags: list[str] | None = None) -> dict:
     spec = CASES[case]
     out_json = os.path.join(args.report_dir, "k05_cases",
                             f"{case}{'.san' if sanitizer else ''}.json")
@@ -321,7 +322,8 @@ def spawn_case(case: str, args, extra_env: dict | None = None,
     cmd = [sys.executable, os.path.abspath(__file__),
            "--child-case", case, "--child-out", out_json]
     if sanitizer:
-        cmd = [sanitizer, "--tool", "memcheck", "--error-exitcode", "88"] + cmd
+        cmd = [sanitizer, "--tool", "memcheck", "--error-exitcode", "88"] \
+            + (san_flags or []) + cmd
     env = dict(os.environ)
     env.update(extra_env or {})
     t0 = time.time()
@@ -384,9 +386,31 @@ def sanitizer_arm(args, first_crash: str | None) -> tuple[str, str, dict]:
                      "class": rec["class"], "duration_s": rec["duration_s"],
                      "evidence": ev})
         statuses.append(st)
+    # 변별 arm: FAIL 인데 요약 0건(rc만 비0)이면 API 오류/메모리 위반을 가른다 —
+    # --report-api-errors no 로 재실행해 clean 이면 '메모리 위반 아님(API 오류 계열)'.
+    for r0 in list(runs):
+        rev0 = r0.get("evidence") or {}
+        if r0["status"] == "FAIL" and rev0.get("error_count") == 0 and r0.get("rc") not in (0, None):
+            c = r0["case"]
+            print(f"[k05] sanitizer 변별 arm: {c} --report-api-errors no")
+            rec2 = spawn_case(c, args, sanitizer=san,
+                              san_flags=["--report-api-errors", "no"])
+            cmd_note = "compute-sanitizer memcheck --report-api-errors no"
+            st2, rs2, ev2 = report.sanitizer_gate_from_output(
+                rec2["tail"], cmd=f"{cmd_note} {c}",
+                returncode=rec2["rc"] if rec2["class"] != "timeout" else None)
+            if rec2.get("san_excerpt"):
+                ev2["san_excerpt"] = rec2["san_excerpt"]
+            runs.append({"case": f"{c}_noapi", "status": st2, "reason": rs2,
+                         "rc": rec2["rc"], "class": rec2["class"],
+                         "duration_s": rec2["duration_s"], "evidence": ev2})
     ev = {"sanitizer_bin": san, "runs": runs}
     if "FAIL" in statuses:
         bad = next(r for r in runs if r["status"] == "FAIL")
+        noapi = next((r for r in runs if r["case"].endswith("_noapi")), None)
+        if noapi and noapi["status"] == "PASS":
+            return ("FAIL", f"[{bad['case']}] rc={bad['rc']} 이나 메모리 위반 0 + API 억제 시 clean — "
+                            "API 오류 계열(raw 는 evidence.san_excerpt), 메모리 안전성은 양호 추정", ev)
         return ("FAIL", f"[{bad['case']}] {bad['reason']}", ev)
     if all(s == "PASS" for s in statuses):
         return ("PASS", f"memcheck clean: {', '.join(r['case'] for r in runs)}", ev)
