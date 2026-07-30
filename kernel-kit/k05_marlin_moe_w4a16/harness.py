@@ -376,7 +376,8 @@ def sanitizer_arm(args, first_crash: str | None) -> tuple[str, str, dict]:
         print(f"[k05] sanitizer arm: {c} (memcheck — 느림, hang 아님)")
         rec = spawn_case(c, args, sanitizer=san)
         st, rs, ev = report.sanitizer_gate_from_output(
-            rec["tail"], cmd=f"compute-sanitizer memcheck {c}",
+            (rec.get("san_excerpt") or "") + "\n" + rec["tail"],
+            cmd=f"compute-sanitizer memcheck {c}",
             returncode=rec["rc"] if rec["class"] != "timeout" else None)
         if rec.get("san_excerpt"):
             ev["san_excerpt"] = rec["san_excerpt"]   # 오류 블록 원문(위반 커널·주소·스택)
