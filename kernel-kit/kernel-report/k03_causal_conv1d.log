@@ -1,1 +1,0 @@
-{"id": "k03_causal_conv1d", "overall": "INCOMPLETE", "gates": {"NUMERIC": "SKIP", "SANITIZER": "SKIP", "SHAPES": "SKIP", "PERF": "SKIP"}, "report": "/work/kernel-kit/kernel-report/k03_causal_conv1d.json"}

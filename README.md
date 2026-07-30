@@ -25,6 +25,27 @@ run_all 최종 exit 코드**만 옮겨주면 된다. FAIL/CRASH 가 있으면 �
 full 티어(k05 Marlin crash 재현 + compute-sanitizer 포함)가 Release 에 올라오면 2~4를
 `full` 로 반복: `bash run/10-load-image.sh full && bash run/20-kernel-test.sh full`.
 
+## 처음부터 다시 (재클론했을 때 — S3 진단 라운드 기준)
+
+git conflict 등으로 지우고 다시 받았어도 **도커 이미지는 노드에 남아 있다**(`docker load` 는
+repo 와 무관) — `run/10` 은 멱등이라 이미 있으면 즉시 skip 된다. 실행 결과(`kernel-report/`)는
+git 미추적(로컬 전용)이므로 재클론하면 사라진다 → 스윕을 다시 돌려 재생성하면 된다.
+
+```bash
+git clone git@github.com:jimmylegendary/k3-sm80.git && cd k3-sm80
+bash run/00-check-node.sh                 # 사전점검 (exit 0 확인)
+bash run/10-load-image.sh triton          # 이미 load 돼 있으면 "skip" 한 줄 뜨고 끝
+bash run/10-load-image.sh full
+bash run/20-kernel-test.sh full           # ① 전체 스윕 (k05 sanitizer arm 포함, 수십 분)
+bash run/27-perf-calib.sh full            # ② PERF 교정 실측 (~2분)
+bash run/28-k05-sanitizer.sh              # ③ k05 memcheck 상세 (GPU 불필요, ① 이후)
+bash run/26-k01-ab.sh full                # ④ (선택) k01 int32 수정 확정 A/B (~2분)
+```
+
+**회신할 것 (전부 화면 텍스트, 순서대로):** ① 의 RELAY 블록 + exit 코드 → ② 의 C0~C9 →
+③ 의 S0~S9 → ④ 의 AB-VERDICT 한 줄. 이 네 묶음이 S3(커널 수정)의 전체 입력이다.
+`R!` 로 시작하는 줄이 보이면 이전 실행 결과가 섞였다는 경고 — 그 줄도 같이 전달.
+
 ## 커널 테스트 결과를 읽는 법
 
 - 커널별 판정 = 4게이트: **NUMERIC**(fp32 참조 대비 오차) / **SANITIZER**(memcheck) /
