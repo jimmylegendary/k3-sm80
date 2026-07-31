@@ -39,6 +39,19 @@ class StaticLayoutTest(unittest.TestCase):
 
         self.assertTrue(any("override env" in error for error in errors), errors)
 
+    def test_ignores_python_bytecode_cache_only(self) -> None:
+        cache = (
+            self.root
+            / "deploy"
+            / "01-tp8-pp4-256k-safe"
+            / "scripts"
+            / "__pycache__"
+        )
+        cache.mkdir()
+        (cache / "cluster.cpython-312.pyc").write_bytes(b"runtime cache")
+
+        self.assertEqual(validate_repository(self.root), [])
+
     def test_rejects_duplicate_ports_between_lanes(self) -> None:
         first = self.root / "deploy" / "01-tp8-pp4-256k-safe" / ".env"
         second = self.root / "deploy" / "02-tp8-dp4-ep32-256k-safe" / ".env"

@@ -39,7 +39,11 @@ def _layout_errors(lane_dir: Path, lane_id: str) -> list[str]:
 
     scripts = lane_dir / "scripts"
     if scripts.is_dir():
-        actual_scripts = {path.name for path in scripts.iterdir()}
+        actual_scripts = {
+            path.name
+            for path in scripts.iterdir()
+            if path.name != "__pycache__"
+        }
         for name in sorted(_SCRIPT_FILES - actual_scripts):
             errors.append(f"{lane_id}: missing scripts/{name}")
         for name in sorted(actual_scripts - _SCRIPT_FILES):
