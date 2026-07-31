@@ -1,5 +1,10 @@
 # Kimi K3 — 4×8 A100 multi-node MP serving 설계
 
+> 이 문서는 최초 단일환경 설계 기록이다. 5개 독립환경과 추가 kernel gate를 포함한 최신
+> 설계는
+> [`2026-07-31-kimi-k3-5lane-serving-design.md`](2026-07-31-kimi-k3-5lane-serving-design.md)를
+> 따른다.
+
 작성일: 2026-07-31
 대상 vLLM: `0498dc7ea9204f1863b46515816f5d8d458e01e7`
 대상 checkpoint: 원본 `moonshotai/Kimi-K3` MXFP4
