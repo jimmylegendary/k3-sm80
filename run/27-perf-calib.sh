@@ -10,16 +10,17 @@
 # 사용:   bash run/27-perf-calib.sh [triton|full]
 # 결과:   C0~C9 (≤12줄) — 기기 정보 / 측정 달성 HBM·TC 피크 / 커널별 효율(이론 vs 달성 기준).
 #         이 출력 전체를 전달하면 floor 재조정 여부를 근거로 판정한다.
-set -uo pipefail
+set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIER="${1:-triton}"
 IMG="ghcr.io/jimmylegendary/k3-sm80-kernelkit:$TIER"
 docker image inspect "$IMG" >/dev/null 2>&1 \
   || { echo "[calib] $IMG 없음 — 먼저: bash run/10-load-image.sh $TIER" >&2; exit 3; }
 
-docker run --rm --gpus all -v "$ROOT":/work \
+echo "[calib] 시작: tier=$TIER image=$IMG (C0~C9 진행상황은 즉시 출력)"
+docker run --rm -i --gpus all -v "$ROOT":/work \
   -u "$(id -u):$(id -g)" -e HOME=/tmp -e TRITON_CACHE_DIR=/tmp/.triton \
-  "$IMG" python3 - <<'EOF'
+  "$IMG" python3 -u - <<'EOF'
 import json, os, sys
 import torch
 

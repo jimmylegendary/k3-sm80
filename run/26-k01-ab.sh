@@ -9,16 +9,17 @@
 #   FIXED        = A OK + B OK  → 진단·수정 모두 확정 (다음: run/20 으로 k01 전체 재검증)
 #   REPRODUCED   = A OK + B FAIL → 진단 확정, 수정 미적용 상태 (git pull 확인)
 #   UNEXPECTED   = 그 외        → 후보1 반증 또는 별개 문제 — 출력 전체 전달
-set -uo pipefail
+set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TIER="${1:-triton}"
 IMG="ghcr.io/jimmylegendary/k3-sm80-kernelkit:$TIER"
 docker image inspect "$IMG" >/dev/null 2>&1 \
   || { echo "[ab] $IMG 없음 — 먼저: bash run/10-load-image.sh $TIER" >&2; exit 3; }
 
-docker run --rm --gpus all -v "$ROOT":/work \
+echo "[ab] 시작: tier=$TIER image=$IMG (A/B 진행상황은 즉시 출력)"
+docker run --rm -i --gpus all -v "$ROOT":/work \
   -u "$(id -u):$(id -g)" -e HOME=/tmp -e TRITON_CACHE_DIR=/tmp/.triton \
-  "$IMG" python3 - <<'EOF'
+  "$IMG" python3 -u - <<'EOF'
 import sys, traceback
 sys.path.insert(0, "/work/kernel-kit")
 sys.path.insert(0, "/work/kernel-kit/k01_kda_chunk")
