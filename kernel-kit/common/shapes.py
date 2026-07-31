@@ -62,6 +62,7 @@ MLA_QK_HEAD = 192            # §1 q/k head dim = 128+64
 MLA_V_HEAD = 128             # §1 v_head_dim
 MLA_CACHE_D = 576            # §8 latent 캐시 = kv_lora 512 + rope몫 64 (vLLM absorbed decode, 2B/elem)
 MLA_NOPE = True              # §3 assert self.use_nope, rotary_emb=None
+MLA_FP8_PAGE_SIZE = 64       # lane 04/05 software E4M3FN cache page (token/page)
 
 # ---------------------------------------------------------------------------
 # 4) 양자화/파라미터 (recon/k3-config.md §3·§4·§6)
@@ -86,6 +87,26 @@ DSPARK_REQUIRED_CASES = {
     "ctx1m": {"context": 1_048_576},
 }
 
+# Software E4M3FN MLA cache standalone gate.  The 1M case deliberately leaves
+# the final physical page partially filled to exercise masked page tails.
+MLA_FP8_REQUIRED_CASES = {
+    "contiguous_8k": {
+        "tokens": 8_192,
+        "active_tokens": 8_192,
+        "block_table": "contiguous",
+    },
+    "noncontiguous_256k": {
+        "tokens": 262_144,
+        "active_tokens": 262_144,
+        "block_table": "noncontiguous",
+    },
+    "partial_1m": {
+        "tokens": 1_048_576,
+        "active_tokens": 1_048_563,
+        "block_table": "noncontiguous",
+    },
+}
+
 # ---------------------------------------------------------------------------
 # 5) S2 테스트 매트릭스 (docs/PLAN.md §S2 완료판정 3: 배치 1/8/32, ctx 8k/128k 대표점)
 # ---------------------------------------------------------------------------
@@ -101,6 +122,7 @@ KERNEL_IDS = (
     "k06_dequant_bench",     # dequant 마이크로벤치 (phase0 모델 재보정용)
     "k07_situ_act",          # SiTU 언퓨즈드 참조 (성능 후순위)
     "k08_mxfp4_marlin_moe",  # 원본 MXFP4 checkpoint → Marlin MoE SM80
+    "k09_mla_fp8_kv_sm80",   # uint8 E4M3FN software MLA KV cache
 )
 
 KERNEL_TITLES = {
@@ -112,6 +134,7 @@ KERNEL_TITLES = {
     "k06_dequant_bench": "W4A16 dequant 마이크로벤치 (dequant_ops/param 재보정)",
     "k07_situ_act": "SiTU-GLU 언퓨즈드 참조 activation",
     "k08_mxfp4_marlin_moe": "Original MXFP4 Marlin MoE (TP8/EP32 SM80 gate)",
+    "k09_mla_fp8_kv_sm80": "Software E4M3FN MLA KV cache (SM80 byte storage)",
 }
 
 # SHAPES 게이트 요구 커버리지: 케이스 이름 → 케이스 파라미터.
@@ -179,6 +202,7 @@ REQUIRED_SHAPES = {
         "m32": dict(m=32, k=LATENT, n=MOE_INTER, e=N_EXPERTS, topk=TOPK),
         "prefill": dict(m=8192, k=LATENT, n=MOE_INTER, e=N_EXPERTS, topk=TOPK),
     },
+    "k09_mla_fp8_kv_sm80": dict(MLA_FP8_REQUIRED_CASES),
 }
 
 
@@ -288,6 +312,15 @@ def perf_bytes_model(kernel_id: str, **case) -> dict:
             macs=macs,
             alu_ops=uniq * params * 4.0,
             note="원본 MXFP4(0.53125B/p) routed expert 가중치 + BF16 dequant Marlin",
+        )
+    elif kernel_id == "k09_mla_fp8_kv_sm80":
+        tokens = case.get("active_tokens", case.get("tokens", 0))
+        values = tokens * MLA_CACHE_D
+        out.update(
+            # round-trip: pack(BF16 read + byte write) + load(byte read + BF16 write)
+            bytes=values * (2 + 1 + 1 + 2),
+            alu_ops=values * 12.0,
+            note="software E4M3FN round-trip: BF16↔uint8, native FP8 연산 없음",
         )
     else:
         raise KeyError(f"미등록 커널 id: {kernel_id}")

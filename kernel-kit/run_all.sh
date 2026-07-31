@@ -13,7 +13,7 @@ set -uo pipefail
 KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPORT_DIR="${KERNEL_REPORT_DIR:-$KIT_DIR/kernel-report}"
 VERDICT="${PHASE0_VERDICT:-$KIT_DIR/../phase0/verdict.json}"
-KERNELS_DEFAULT="k01_kda_chunk k02_kda_recurrent k03_causal_conv1d k04_mla_decode k05_marlin_moe_w4a16 k06_dequant_bench k07_situ_act k08_mxfp4_marlin_moe"
+KERNELS_DEFAULT="k01_kda_chunk k02_kda_recurrent k03_causal_conv1d k04_mla_decode k05_marlin_moe_w4a16 k06_dequant_bench k07_situ_act k08_mxfp4_marlin_moe k09_mla_fp8_kv_sm80"
 KERNELS="${KERNELS:-$KERNELS_DEFAULT}"
 
 DRY=""

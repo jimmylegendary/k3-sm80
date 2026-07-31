@@ -139,6 +139,11 @@ PERF_POLICY = {
         eff_floor=0.40,
         basis="원본 MXFP4 weight-only Marlin MoE의 최초 SM80 gate. k05 W4A16과 같은 "
               "보수적 루프라인 효율 0.40을 사용하고 TP8/EP32 양 arm을 별도 기록."),
+    "k09_mla_fp8_kv_sm80": dict(
+        mode="measure_only", cv_max=0.15,
+        basis="lane 04/05의 1차 gate는 native-FP8 성능이 아니라 uint8 0.5× HBM "
+              "footprint·bit 정확성·paged addressing 성립성이다. 최초 A100 수치는 "
+              "측정값으로 보존하고 임의 throughput floor를 적용하지 않는다."),
 }
 
 
