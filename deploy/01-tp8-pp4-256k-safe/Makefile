@@ -4,6 +4,8 @@ SHELL := /usr/bin/env bash
 PYTHON ?= python3
 LANE_ID := 01-tp8-pp4-256k-safe
 COMPOSE := docker compose --env-file .env
+REPO_ROOT := $(abspath ../..)
+REMOTE := PYTHONPATH=$(REPO_ROOT) $(PYTHON) -m deploy.tooling.remote
 
 .PHONY: help config preflight dry-run up down status logs smoke gates calibrate
 
@@ -26,19 +28,19 @@ preflight:
 	@$(PYTHON) scripts/preflight.py --env-file .env
 
 dry-run:
-	@$(PYTHON) scripts/cluster.py up --dry-run
+	@$(REMOTE) up --lane $(CURDIR) --dry-run
 
 up: preflight
-	@$(PYTHON) scripts/cluster.py up
+	@$(REMOTE) up --lane $(CURDIR)
 
 down:
-	@$(PYTHON) scripts/cluster.py down
+	@$(REMOTE) down --lane $(CURDIR)
 
 status:
-	@$(PYTHON) scripts/cluster.py status
+	@$(REMOTE) status --lane $(CURDIR)
 
 logs:
-	@$(PYTHON) scripts/cluster.py logs
+	@$(REMOTE) logs --lane $(CURDIR)
 
 smoke:
 	@$(PYTHON) scripts/smoke.py --env-file .env

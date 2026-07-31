@@ -44,6 +44,7 @@ services:
     labels:
       io.k3.lane: "02-tp8-dp4-ep32-256k-safe"
       io.k3.node-rank: "0"
+      io.k3.run-id: ${K3_RUN_ID:-manual}
       io.k3.ssh-host: ${K3_HEAD_SSH_HOST}
       io.k3.ssh-user: ${K3_HEAD_SSH_USER}
 
@@ -59,6 +60,7 @@ services:
     labels:
       io.k3.lane: "02-tp8-dp4-ep32-256k-safe"
       io.k3.node-rank: "1"
+      io.k3.run-id: ${K3_RUN_ID:-manual}
       io.k3.ssh-host: ${K3_WORKER1_SSH_HOST}
       io.k3.ssh-user: ${K3_WORKER1_SSH_USER}
 
@@ -74,6 +76,7 @@ services:
     labels:
       io.k3.lane: "02-tp8-dp4-ep32-256k-safe"
       io.k3.node-rank: "2"
+      io.k3.run-id: ${K3_RUN_ID:-manual}
       io.k3.ssh-host: ${K3_WORKER2_SSH_HOST}
       io.k3.ssh-user: ${K3_WORKER2_SSH_USER}
 
@@ -89,5 +92,6 @@ services:
     labels:
       io.k3.lane: "02-tp8-dp4-ep32-256k-safe"
       io.k3.node-rank: "3"
+      io.k3.run-id: ${K3_RUN_ID:-manual}
       io.k3.ssh-host: ${K3_WORKER3_SSH_HOST}
       io.k3.ssh-user: ${K3_WORKER3_SSH_USER}

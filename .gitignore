@@ -4,3 +4,4 @@ docker/logs/
 *.tar.zst.part-*
 kernel-kit/kernel-report/
 .dl-*/
+deploy/0*-*/.k3-cluster.lock
