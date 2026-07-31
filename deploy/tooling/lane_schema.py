@@ -50,9 +50,15 @@ VLLM_KEYS = frozenset(
         "VLLM_ALL2ALL_BACKEND",
         "VLLM_MOE_BACKEND",
         "VLLM_ATTENTION_BACKEND",
+        "VLLM_ATTENTION_CONFIG",
+        "VLLM_KDA_PREFILL_BACKEND",
         "VLLM_QUANTIZATION",
         "VLLM_DTYPE",
         "VLLM_KV_CACHE_DTYPE",
+        "VLLM_KV_CACHE_DTYPE_SKIP_LAYERS",
+        "VLLM_K3_SM80_FP8_KV",
+        "VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8",
+        "VLLM_MARLIN_MXFP8_INPUT_QDQ",
         "VLLM_MAX_MODEL_LEN",
         "VLLM_MAX_NUM_SEQS",
         "VLLM_MAX_NUM_BATCHED_TOKENS",
@@ -94,9 +100,18 @@ _BOOL_KEYS = frozenset(
         "VLLM_ENFORCE_EAGER",
         "VLLM_ENABLE_PREFIX_CACHING",
         "VLLM_LANGUAGE_MODEL_ONLY",
+        "VLLM_K3_SM80_FP8_KV",
+        "VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8",
+        "VLLM_MARLIN_MXFP8_INPUT_QDQ",
     }
 )
-_JSON_KEYS = frozenset({"VLLM_COMPILATION_CONFIG", "VLLM_SPECULATIVE_CONFIG"})
+_JSON_KEYS = frozenset(
+    {
+        "VLLM_ATTENTION_CONFIG",
+        "VLLM_COMPILATION_CONFIG",
+        "VLLM_SPECULATIVE_CONFIG",
+    }
+)
 
 
 def _unquote(value: str) -> str:
@@ -196,6 +211,13 @@ class LaneEnv:
             "VLLM_ENABLE_EXPERT_PARALLEL": "1" if spec.ep else "0",
             "VLLM_MAX_MODEL_LEN": str(spec.max_len),
             "VLLM_KV_CACHE_DTYPE": "fp8" if spec.fp8_kv else "bfloat16",
+            "VLLM_K3_SM80_FP8_KV": "1" if spec.fp8_kv else "0",
+            "VLLM_KDA_PREFILL_BACKEND": "triton",
+            "VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8": "0",
+            "VLLM_MARLIN_MXFP8_INPUT_QDQ": "0",
+            "VLLM_KV_CACHE_DTYPE_SKIP_LAYERS": (
+                "93 94 95 96 97" if spec.fp8_kv and spec.dspark else ""
+            ),
         }
         for key, expected in expected_pairs.items():
             actual = self.values.get(key)

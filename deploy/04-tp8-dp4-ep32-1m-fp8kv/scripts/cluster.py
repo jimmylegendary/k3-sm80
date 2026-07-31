@@ -41,6 +41,8 @@ def serve_args(node_rank: int) -> list[str]:
         "--max-num-batched-tokens", value("VLLM_MAX_NUM_BATCHED_TOKENS"),
         "--gpu-memory-utilization", value("VLLM_GPU_MEMORY_UTILIZATION"),
         "--attention-backend", value("VLLM_ATTENTION_BACKEND"),
+        "--attention-config", value("VLLM_ATTENTION_CONFIG"),
+        "--kda-prefill-backend", value("VLLM_KDA_PREFILL_BACKEND"),
         "--moe-backend", value("VLLM_MOE_BACKEND"),
         "--compilation-config", value("VLLM_COMPILATION_CONFIG"),
         "--served-model-name", value("VLLM_SERVED_MODEL_NAME"),
@@ -59,6 +61,13 @@ def serve_args(node_rank: int) -> list[str]:
     add_bool(args, "VLLM_LANGUAGE_MODEL_ONLY", "--language-model-only")
     if value("VLLM_SPECULATIVE_CONFIG"):
         args.extend(["--speculative-config", value("VLLM_SPECULATIVE_CONFIG")])
+    if value("VLLM_KV_CACHE_DTYPE_SKIP_LAYERS"):
+        skip_layers = shlex.split(value("VLLM_KV_CACHE_DTYPE_SKIP_LAYERS"))
+        if not skip_layers or any(not layer.isdecimal() for layer in skip_layers):
+            raise ValueError(
+                "VLLM_KV_CACHE_DTYPE_SKIP_LAYERS must contain decimal layer indices"
+            )
+        args.extend(["--kv-cache-dtype-skip-layers", *skip_layers])
     args.extend(shlex.split(value("VLLM_EXTRA_ARGS")))
     return args
 

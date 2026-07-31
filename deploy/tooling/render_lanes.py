@@ -54,7 +54,7 @@ def _lane_values(spec: LaneSpec) -> dict[str, str]:
             separators=(",", ":"),
         )
     return {
-        "K3_IMAGE": "k3-sm80-openai:0498dc7e-sm80",
+        "K3_IMAGE": "k3-sm80-openai:0498dc7e-sm80-v3",
         "K3_TARGET_MODEL": "moonshotai/Kimi-K3",
         "K3_DRAFT_MODEL": "Inferact/Kimi-K3-DSpark",
         "K3_HF_HOME": "/mnt/nas/home/models",
@@ -88,9 +88,20 @@ def _lane_values(spec: LaneSpec) -> dict[str, str]:
         "VLLM_ALL2ALL_BACKEND": "allgather_reducescatter",
         "VLLM_MOE_BACKEND": "marlin",
         "VLLM_ATTENTION_BACKEND": "TRITON_MLA",
+        "VLLM_ATTENTION_CONFIG": json.dumps(
+            {"use_prefill_query_quantization": False},
+            separators=(",", ":"),
+        ),
+        "VLLM_KDA_PREFILL_BACKEND": "triton",
         "VLLM_QUANTIZATION": "mxfp4",
         "VLLM_DTYPE": "bfloat16",
         "VLLM_KV_CACHE_DTYPE": "fp8" if spec.fp8_kv else "bfloat16",
+        "VLLM_KV_CACHE_DTYPE_SKIP_LAYERS": (
+            "93 94 95 96 97" if spec.fp8_kv and spec.dspark else ""
+        ),
+        "VLLM_K3_SM80_FP8_KV": "1" if spec.fp8_kv else "0",
+        "VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8": "0",
+        "VLLM_MARLIN_MXFP8_INPUT_QDQ": "0",
         "VLLM_MAX_MODEL_LEN": str(spec.max_len),
         "VLLM_MAX_NUM_SEQS": "1",
         "VLLM_MAX_NUM_BATCHED_TOKENS": "4096",
@@ -160,10 +171,47 @@ def render_env(context: dict[str, object]) -> str:
 
 
 def _context(spec: LaneSpec) -> dict[str, Any]:
+    from .gates import GATE_MATRIX, PREREQUISITE_GATES
+
+    number = f"{spec.number:02d}"
+    load_gate = "pp" if spec.number == 1 else "ep"
+    context_gate = "1m" if spec.fp8_kv else load_gate
+    if spec.fp8_kv:
+        context_checkpoints = "262144 → 524288 → 786432 → 1048576"
+        calibrate_instruction = (
+            "`make calibrate`로 현재 `VLLM_MAX_NUM_SEQS` 후보를 검증한다."
+        )
+    else:
+        context_checkpoints = "8192 → 131072 → 262144"
+        calibrate_instruction = "이 lane에는 calibration을 적용하지 않는다."
+    dspark_instruction = (
+        "`make gate-dspark`를 실행한다."
+        if spec.dspark
+        else "이 lane에는 DSpark gate를 적용하지 않는다."
+    )
+    baseline_note = (
+        "`make baseline`으로 다음 DSpark lane의 target-only fixture를 남긴다."
+        if spec.number in (2, 4)
+        else "이 lane은 다음 DSpark 비교용 baseline fixture를 만들지 않는다."
+    )
+    if spec.number == 5:
+        kv_layout_note = (
+            "lane 05의 target MLA는 SM80 software FP8 cache를 사용하지만, "
+            "RoPE를 쓰는 DSpark draft 5개 layer(93–97)는 "
+            "`VLLM_KV_CACHE_DTYPE_SKIP_LAYERS='93 94 95 96 97'`로 BF16을 "
+            "유지한다. 이 값은 pinned 93-layer target에 묶인 fail-closed 계약이다."
+        )
+    elif spec.fp8_kv:
+        kv_layout_note = (
+            "target MLA cache는 SM80 software FP8 storage를 사용한다. "
+            "native FP8 arithmetic은 사용하지 않는다."
+        )
+    else:
+        kv_layout_note = "MLA KV cache는 BF16이며 software FP8 경로는 비활성이다."
     return {
         "SPEC": spec,
         "LANE_ID": spec.id,
-        "LANE_NUMBER": f"{spec.number:02d}",
+        "LANE_NUMBER": number,
         "TP": spec.tp,
         "PP": spec.pp,
         "DP": spec.dp,
@@ -171,6 +219,25 @@ def _context(spec: LaneSpec) -> dict[str, Any]:
         "MAX_LEN": spec.max_len,
         "DSPARK": int(spec.dspark),
         "FP8_KV": int(spec.fp8_kv),
+        "REQUIRED_GATES": " ".join(GATE_MATRIX[number]),
+        "PREREQUISITE_GATES": " ".join(PREREQUISITE_GATES[number]),
+        "LOAD_GATE": load_gate,
+        "CONTEXT_GATE": context_gate,
+        "BASELINE_LANE_ID": (
+            LANES[spec.number - 2].id
+            if spec.dspark
+            else spec.id
+        ),
+        "NEXT_LANE": (
+            f"{spec.number + 1:02d}"
+            if spec.number < len(LANES)
+            else "production-candidate"
+        ),
+        "CONTEXT_CHECKPOINTS": context_checkpoints,
+        "CALIBRATE_INSTRUCTION": calibrate_instruction,
+        "DSPARK_INSTRUCTION": dspark_instruction,
+        "BASELINE_NOTE": baseline_note,
+        "KV_LAYOUT_NOTE": kv_layout_note,
     }
 
 

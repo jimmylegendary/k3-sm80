@@ -1,4 +1,23 @@
-# K3 → 32×A100(SM80) 종합 요약 — Phase 0 판정 + Phase 1 반입 준비 완료
+# K3 → 32×A100(SM80) 종합 요약 — 원본 MXFP4 five-lane serving 준비
+
+## 0. 2026-07-31 현재 구현 상태
+
+- **checkpoint는 재양자화하지 않는다.** `moonshotai/Kimi-K3` 원본 MXFP4 weight를
+  Marlin MoE가 BF16 activation/dequant compute로 실행한다. 따라서 W4A16 checkpoint를
+  새로 만들 때 생길 수 있는 weight 정확도 손실은 이 경로에 없다.
+- SM80용 MXFP4 Marlin MoE 수정, KDA int64 overflow 수정, KDA Triton 강제,
+  software E4M3FN MLA KV cache opt-in이 pinned vLLM `0498dc7e` patchset으로 들어갔다.
+- lane 05는 target MLA만 software FP8이고, RoPE DSpark draft layer 93–97은
+  `--kv-cache-dtype-skip-layers`로 BF16 cache를 유지한다.
+- 독립 gate는 `k08`(원본 MXFP4 MoE), `kda`(k01+k02), `c01`(4-node EP32),
+  `k09`(SM80 software FP8 KV), `k10`(DSpark state/integration)로 분리했다.
+- 5개 lane의 Compose/Makefile/단일 `.env`/Runbook은
+  `deploy/01-*`부터 `deploy/05-*`에 있다. 모두 native vLLM MP이며 Ray를 쓰지 않는다.
+- 개발 host의 정적·CPU contract PASS는 A100 kernel/service PASS가 아니다. 실제 결과는
+  `docs/A100-5LANE-RESULTS.md`에서 현재 모두 `INCOMPLETE`로 시작한다.
+
+권장 승격 순서: lane 01 TP8/PP4 256k → lane 02 TP8/DP4/EP32 256k →
+lane 03 +DSpark → lane 04 1M+software FP8 KV → lane 05 두 기능 결합.
 
 날짜: 2026-07-28 · 스펙: `docs/superpowers/specs/2026-07-28-k3-sm80-serving-design.md` (접근 A 승인본)
 
@@ -13,6 +32,10 @@
 | hatir / hat-schema | `3a60d38` / `98ea3f7` | phase0/verdict.json |
 
 파일 지도: 조사 = `recon/{vllm-upstream,k3-config,kda-fla,a100-comms}.md` · Phase 0 = `phase0/{twin_a100_x32.json,k3_model.py,results.json,REPORT.md,verdict.json,VERIFICATION.md}` · 반입 킷 = `a100-kit/{RUNBOOK.md,DECISION-TREE.md,probe_35922.sh,probe_kda_fla.py,probe_k3_modules.py,VERIFICATION.md}`
+
+아래 §1–§4의 Phase 0/1 내용은 2026-07-28 탐색 기록이다. 현재 실행 기준은
+§0과 `deploy/01-*`…`deploy/05-*`의 lane별 `RUNBOOK.md`이며, 원본 MXFP4 경로를
+폐기하고 W4A16으로 전환하던 과거 분기는 더 이상 실행 계획이 아니다.
 
 ---
 
@@ -34,7 +57,8 @@
 | EP32 (PP 없음) | 17.9 → 63.2 | 387 | comm-α (inter-node a2a) |
 
 - **TP8PP4가 지연·처리량 양 축 모두 승자.** 초기 산출의 "단일 스트림=TP8PP4 / 처리량=EP32 레짐 이원화"는 검증에서 **폐기** — (i) PP 마이크로배치 파이프라이닝을 0으로 치던 지표 인공물, (ii) 노드 간 a2a α를 allreduce α로 낙관하던 오류(per-peer 구조로 정정 시 EP32 collective당 188µs)의 합작이었다.
-- Phase 3(전량 W4A16, 56GB/tok) 가정 시: TP8PP4 b1 real **65.7** (1.40×) → opt **161.0**, b32 real 파이프 1154 tok/s.
+- 과거 counterfactual로 전량 W4A16이면 TP8PP4 b1 real **65.7**로 모델링됐지만,
+  정확도 손실 우려 때문에 선택하지 않았다. 현재 five-lane은 모두 원본 MXFP4다.
 - 메모리: 전 전략 80GB 적재 OK(최악 61.3GB/GPU). seq당 KV+state @256k = 2.13GB(TP8PP4)~7.30GB(EP32) → @256k 동시 seq 상한 TP8PP4=11, EP32=4. ctx 민감도: TP8PP4 real b8 기준 8k 25.5 → 128k 19.0 tok/s (완만).
 
 ### 신뢰 구간과 가장 약한 가정
@@ -65,7 +89,7 @@
 | hard SM90 assert 우려 | **없음** — 전부 soft fallback (FlashKDA·fused_kda_decode·cute_dsl은 SM80에서 자동 스킵/미사용) | probe_k3_modules로 초기화 경로만 실증하면 됨 |
 | Marlin FP4 SM80 신규 인스턴스화 필요 가능성 | **이미 인스턴스화됨**(bf16-act MXFP4/NVFP4 → `sm80_kernel_*.cu`) — 필요한 건 **crash 수정** | Phase 2-2 대상 파일 특정 완료(`csrc/libtorch_stable/moe/marlin_moe_wna16/`) |
 | FlashInfer pre-release 수동 해소 필요 | **불필요** — #4178/#4180은 B300/B200 도커 전용. 표준 `flashinfer-python==0.6.15.post1`(PyPI에도 존재)로 충족 | 반입 절차 단순화, 설치 금지 명시 |
-| 활성 52GB/token (104B×0.5B) | **2.6× 과소** — 원본 ckpt는 **136.96 GB/token** (활성 104.19B 중 53.3%=55.6B가 bf16: KDA+MLA+shared+latent). 바이트 단위 폐쇄 검증 완료 | 병목은 expert가 아니라 bf16 잔여부 → **Phase 3 가치의 재정의**(§4-1) |
+| 활성 52GB/token (104B×0.5B) | **2.6× 과소** — 원본 ckpt는 **136.96 GB/token** (활성 104.19B 중 53.3%=55.6B가 bf16: KDA+MLA+shared+latent). 바이트 단위 폐쇄 검증 완료 | 병목은 expert가 아니라 bf16 잔여부. W4A16 수치는 과거 counterfactual이며 현재 경로가 아님 |
 | 현실 낙관치 단일 스트림 10~30 tok/s 추정 | **46.8(보수)–87.3(낙관)으로 상향 확정** — 93층 직렬화 세금(comm-α 5.6ms + launch 5.1ms/스텝)은 우려대로 실재하나 HBM 스트리밍(8.0ms)과 병렬 규모가 지배 | 게이트 PASS의 실체 |
 | probe용 소형모델 `Kimi-K3-0.18B` | HF에 **존재하지 않음**(401) → 실물 K3 config/tokenizer/remote-code + 축소 config + `load_format="dummy"` 대안으로 킷 구현 | probe_k3_modules 설계 변경 완료 |
 | hatir 그대로 적용 가능 | 기본 `_gemm_plan`이 이 트윈에서 디코드 compute **10–20× 과대계상**(SM당 smem reuse-tier 클램프) → einsum.tile 직접 저작 플랜으로 대체 | hatir 환류 백로그(부산물: 32×A100 트윈 + K3 케이스 스터디) |
@@ -98,22 +122,24 @@
 
 ### 각 결과가 계획을 바꾸는 방식 (DECISION-TREE 요지)
 
-- **arm A=CRASH_IMA ∧ arm C=SUCCESS (예상 시나리오)** → Phase 2 우회 1안(MoE=Triton W4A16) 확정 + **Phase 3 격상**(원본 MXFP4의 auto 생존 후보가 Marlin뿐이라 crash 미해결 시 W4A16 재양자화가 서빙 성립 조건).
-- **arm E(MXFP4 marlin 강제)=SUCCESS** → **원본 ckpt 직행 lane 부활**: 재양자화 없이 K3 실물 로드 시도 가치. Phase 3는 성능 사유(137→56GB/tok)로만 남음.
-- **arm B sanitizer가 `c_tmp` OOB 지목** → Phase 2-2 커널수정 트랙 개시 가능(#36889 diff 출발점, 수정 1회로 INT4+FP4 동시 해결 겨냥). sanitizer 없이는 착수 금지.
-- **arm C까지 CRASH** → 우회 1안 반증 = 중대. 커널수정 트랙만 남음 → Jimmy 보고 후 진행 판단.
+- **현재 분기:** patched 원본 MXFP4 Marlin MoE를 `k08`로 먼저 검증한다. PASS면 lane 01로
+  진행하고, FAIL이면 해당 MXFP4 kernel을 계속 수정한다. W4A16 재양자화로 우회하지 않는다.
+- **k08 sanitizer/수치/shape/perf**는 모두 같은 image digest와 commit에 묶인 stamp로
+  남기며, CPU dry-run은 PASS로 승격하지 않는다.
 - **probe_kda_fla 전부 PASS** → 스펙 리스크 "KDA prefill 수치 미검증" 종결, `kda_prefill_backend="triton"` 확정. **CRASH면 최우선 에스컬레이션** — 93층 중 69층이 KDA라 막히면 Phase 2 전체 불가.
 - **probe_k3_modules S3 PASS** → K3 모듈(KDA/AttnRes/LatentMoE/MLA) SM80 성립 → Phase 2 진입, S3_BACKEND_REPORT 값을 설정으로 채택. FAIL은 원인별로 PR #50000 이슈화/자체 패치 분기.
 - **종합**: ①MoE 우회 ②KDA 수치 ③K3 모듈의 8조합 매트릭스가 Phase 2 진입 형태를 결정(DECISION-TREE §4). 마이크로벤치 (a)–(d)는 Phase 0 모델 재보정 → 전략 최종 확정(TP8PP4 기본, TP16PP2 대안) → Phase 4 목표치 = Phase 0 판정치 대비 달성률 관리.
 
 ---
 
-## 4. Jimmy 결정 필요 항목
+## 4. 확정된 현재 방침
 
-1. **Phase 3 재양자화 '조건부'→'필수 경로' 격상 승인** — 근거 2중: (i) 성능 — bf16 잔여 111GB/tok이 지배 병목, 전량 W4A16 시 단일 스트림 1.40×(46.8→65.7 real), (ii) 성립성 — arm A=CRASH ∧ E=FAIL이면 원본 MXFP4는 auto 경로가 전부 crash라 W4A16이 사실상 유일 lane. 결정 부수사항: 2.78T ckpt 재양자화 컴퓨트·디스크(~1.44TB 산출물) 확보처, K3 아키텍처 llm-compressor 미지원 시 커스텀 작업량, QAT-MXFP4→INT4 재매핑 품질 검증 방법 [미확인].
-2. **'쓸 만한 속도' 기준 재가** — Phase 0 게이트는 "단일 스트림 decode ≥ 5 tok/s"로 조작화했다(TTFT/prefill 제외). 46.8 tok/s는 대화형으로 충분하나, TTFT 요구(장문 프롬프트 체감)와 동시 사용자 수 목표를 Jimmy가 정해야 Phase 4 튜닝 목표(단일 스트림 최적 vs 처리량 최적)와 max_num_seqs 검증 우선순위가 정해진다.
-3. **(조건부, 프로브 후) 커널수정 트랙 병행 여부** — 우회 1안이 성립해도 Marlin crash 수정(#36889 계열)에 투자할지: 성능 상한(Marlin이 Triton 대비 빠를 개연성)과 업스트림 기여 가치 vs 시간. arm B 결과를 본 뒤 결정하면 된다.
-4. **(해당 시) kimi-k3 브랜치 드리프트 대응** — pin `0498dc7e`가 force-push로 소실되면 새 head 채택 + 재검증 비용 발생(절차는 킷에 내장, 발생 시 보고만).
+1. checkpoint는 `moonshotai/Kimi-K3` 원본 MXFP4만 사용한다.
+2. native vLLM MP로 4노드 × 8GPU를 구성하며 Ray를 쓰지 않는다.
+3. lane 01→05를 순차 승격하고, 각 lane은 하나의 `.env`와 하나의 profile 기반
+   Compose를 사용한다.
+4. A100에서 새 image digest로 `k08`, KDA, `c01`, 필요 시 `k09`/`k10` 및 integration
+   gate가 PASS하기 전에는 serving 가능을 확정하지 않는다.
 
 ---
 

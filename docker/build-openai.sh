@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_dir="$(dirname "$script_dir")"
-image="${K3_OPENAI_IMAGE:-k3-sm80-openai:0498dc7e-sm80}"
+image="${K3_OPENAI_IMAGE:-k3-sm80-openai:0498dc7e-sm80-v3}"
 base_image="${K3_OPENAI_BASE_IMAGE:-ghcr.io/jimmylegendary/k3-sm80-kernelkit@sha256:d5fc27444ec6a9f52ac18a81acd88394f1840ce747c3eb989a5b4b0316079752}"
 
 command -v docker >/dev/null || {

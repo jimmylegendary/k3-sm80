@@ -6,6 +6,7 @@ import argparse
 import concurrent.futures
 import contextlib
 import fcntl
+import json
 import os
 import shlex
 import subprocess
@@ -184,6 +185,73 @@ def lane_lock(lane_path: Path) -> Iterator[None]:
             fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
+def _cluster_lock_path(env: LaneEnv) -> Path:
+    return Path(env.values["K3_SERVING_ROOT"]) / "runs" / ".k3-32gpu.lock"
+
+
+def _acquire_cluster_lock(
+    lane_path: Path,
+    env: LaneEnv,
+    run_id: str,
+) -> Path:
+    lock = _cluster_lock_path(env)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock.mkdir()
+    except FileExistsError as exc:
+        owner_path = lock / "owner.json"
+        owner = (
+            owner_path.read_text(encoding="utf-8").strip()
+            if owner_path.is_file()
+            else "owner unavailable"
+        )
+        raise RuntimeError(f"32-GPU cluster lock held: {owner}") from exc
+    try:
+        (lock / "owner.json").write_text(
+            json.dumps(
+                {
+                    "lane": lane_path.name,
+                    "run_id": run_id,
+                    "pid": os.getpid(),
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        lock.rmdir()
+        raise
+    return lock
+
+
+def _release_cluster_lock(
+    lane_path: Path,
+    env: LaneEnv,
+    *,
+    force_missing_owner: bool = False,
+) -> None:
+    lock = _cluster_lock_path(env)
+    if not lock.exists():
+        return
+    owner_path = lock / "owner.json"
+    if not owner_path.is_file():
+        if force_missing_owner:
+            lock.rmdir()
+            return
+        raise RuntimeError(f"cluster lock owner missing: {lock}")
+    try:
+        owner = json.loads(owner_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"cluster lock owner corrupt: {lock}") from exc
+    if owner.get("lane") != lane_path.name:
+        raise RuntimeError(
+            f"cluster lock belongs to {owner.get('lane')}, not {lane_path.name}"
+        )
+    owner_path.unlink()
+    lock.rmdir()
+
+
 def _print_failures(
     results: Sequence[tuple[PlannedCommand, subprocess.CompletedProcess[str]]],
 ) -> int:
@@ -265,7 +333,9 @@ def execute_up(lane_path: Path, lane: RemoteLane, env: LaneEnv) -> int:
     run_id = uuid.uuid4().hex
     started: list[RemoteNode] = []
     with lane_lock(lane_path):
+        cluster_lock: Path | None = None
         try:
+            cluster_lock = _acquire_cluster_lock(lane_path, env, run_id)
             _assert_empty(lane)
             head = lane.workers[0]
             head_command = plan_command(lane, head, "up", run_id=run_id)
@@ -292,17 +362,36 @@ def execute_up(lane_path: Path, lane: RemoteLane, env: LaneEnv) -> int:
         except Exception as exc:
             print(f"K3-UP-FAIL run_id={run_id} error={exc}", file=sys.stderr)
             _rollback(lane, started, run_id)
+            if cluster_lock is not None:
+                try:
+                    _release_cluster_lock(lane_path, env)
+                except RuntimeError as lock_exc:
+                    print(
+                        f"K3-UP-LOCK-RELEASE-FAIL error={lock_exc}",
+                        file=sys.stderr,
+                    )
             return 1
     print(f"K3-UP-PASS run_id={run_id} launchers=4 expected_ranks=32")
     return 0
 
 
-def execute_simple(lane_path: Path, lane: RemoteLane, action: str) -> int:
+def execute_simple(
+    lane_path: Path,
+    lane: RemoteLane,
+    env: LaneEnv,
+    action: str,
+) -> int:
     commands = [plan_command(lane, node, action) for node in lane.workers]
     lock_context = lane_lock(lane_path) if action == "down" else contextlib.nullcontext()
     with lock_context:
         results = _run_many(commands, capture=False)
     failures = _print_failures(results)
+    if action == "down" and failures == 0:
+        try:
+            _release_cluster_lock(lane_path, env)
+        except RuntimeError as exc:
+            print(f"K3-DOWN-LOCK-FAIL error={exc}", file=sys.stderr)
+            failures += 1
     print(f"K3-{action.upper()} profiles=4 failures={failures}")
     return 1 if failures else 0
 
@@ -340,7 +429,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.action == "up":
         return execute_up(lane_path, lane, env)
-    return execute_simple(lane_path, lane, args.action)
+    return execute_simple(lane_path, lane, env, args.action)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import shlex
+from pathlib import Path
+from typing import Sequence
 
 from .lane_schema import LaneEnv
 
@@ -29,9 +32,12 @@ _MANAGED_LONG_FLAGS = frozenset(
         "--all2all-backend",
         "--moe-backend",
         "--attention-backend",
+        "--attention-config",
+        "--kda-prefill-backend",
         "--quantization",
         "--dtype",
         "--kv-cache-dtype",
+        "--kv-cache-dtype-skip-layers",
         "--max-model-len",
         "--max-num-seqs",
         "--max-num-batched-tokens",
@@ -107,9 +113,12 @@ def build_vllm_args(env: LaneEnv, node_rank: int) -> list[str]:
         "VLLM_ALL2ALL_BACKEND",
         "VLLM_MOE_BACKEND",
         "VLLM_ATTENTION_BACKEND",
+        "VLLM_ATTENTION_CONFIG",
+        "VLLM_KDA_PREFILL_BACKEND",
         "VLLM_QUANTIZATION",
         "VLLM_DTYPE",
         "VLLM_KV_CACHE_DTYPE",
+        "VLLM_KV_CACHE_DTYPE_SKIP_LAYERS",
         "VLLM_MAX_MODEL_LEN",
         "VLLM_MAX_NUM_SEQS",
         "VLLM_MAX_NUM_BATCHED_TOKENS",
@@ -168,6 +177,10 @@ def build_vllm_args(env: LaneEnv, node_rank: int) -> list[str]:
         v["VLLM_GPU_MEMORY_UTILIZATION"],
         "--attention-backend",
         v["VLLM_ATTENTION_BACKEND"],
+        "--attention-config",
+        v["VLLM_ATTENTION_CONFIG"],
+        "--kda-prefill-backend",
+        v["VLLM_KDA_PREFILL_BACKEND"],
         "--moe-backend",
         v["VLLM_MOE_BACKEND"],
         "--compilation-config",
@@ -192,5 +205,40 @@ def build_vllm_args(env: LaneEnv, node_rank: int) -> list[str]:
     if v["VLLM_SPECULATIVE_CONFIG"]:
         args.extend(["--speculative-config", v["VLLM_SPECULATIVE_CONFIG"]])
 
+    if v["VLLM_KV_CACHE_DTYPE_SKIP_LAYERS"]:
+        skip_layers = shlex.split(v["VLLM_KV_CACHE_DTYPE_SKIP_LAYERS"])
+        if not skip_layers or any(not layer.isdecimal() for layer in skip_layers):
+            raise ValueError(
+                "VLLM_KV_CACHE_DTYPE_SKIP_LAYERS must contain decimal layer indices"
+            )
+        args.extend(["--kv-cache-dtype-skip-layers", *skip_layers])
+
     args.extend(validate_extra_args(shlex.split(v["VLLM_EXTRA_ARGS"])))
     return args
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Print token-safe vLLM serve commands without executing them."
+    )
+    parser.add_argument("--env-file", type=Path, default=Path(".env"))
+    parser.add_argument("--node-rank", type=int, choices=range(4))
+    parser.add_argument("--all-ranks", action="store_true")
+    args = parser.parse_args(argv)
+    if args.all_ranks == (args.node_rank is not None):
+        parser.error("choose exactly one of --all-ranks or --node-rank")
+    env = LaneEnv.load(args.env_file)
+    if env.errors:
+        for error in env.errors[:20]:
+            print(f"K3-CONFIG-FAIL {error}")
+        return 2
+    ranks = range(4) if args.all_ranks else (args.node_rank,)
+    for rank in ranks:
+        assert rank is not None
+        command = ["vllm", "serve", *build_vllm_args(env, rank)]
+        print(f"K3-SERVE-ARGV node_rank={rank} {shlex.join(command)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -16,6 +16,17 @@ _TOP_LEVEL_FILES = frozenset({".env", "compose.yaml", "Makefile", "RUNBOOK.md", 
 _SCRIPT_FILES = frozenset({"preflight.py", "cluster.py", "smoke.py"})
 _PROFILES = ("head", "worker1", "worker2", "worker3")
 _PORT_KEYS = ("VLLM_API_PORT", "VLLM_MASTER_PORT", "VLLM_DP_RPC_PORT")
+_EVIDENCE_IDS = (
+    "k08",
+    "c01",
+    "k10",
+    "k09",
+    "lane01",
+    "lane02",
+    "lane03",
+    "lane04",
+    "lane05",
+)
 
 
 def _duplicate_errors(name: str, owners: dict[str, list[str]]) -> list[str]:
@@ -137,6 +148,51 @@ def validate_repository(root: Path) -> list[str]:
     return errors
 
 
+def validate_evidence(path: Path) -> list[str]:
+    """Validate the compact A100 evidence table without promoting dry runs."""
+
+    if not path.is_file():
+        return [f"evidence missing: {path}"]
+    rows: dict[str, list[str]] = {}
+    errors: list[str] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.startswith("|"):
+            continue
+        fields = [field.strip() for field in line.strip().strip("|").split("|")]
+        if len(fields) != 7:
+            continue
+        identifier = fields[0]
+        if identifier in {"id", "---"} or set(identifier) == {"-"}:
+            continue
+        if identifier not in _EVIDENCE_IDS:
+            continue
+        if identifier in rows:
+            errors.append(f"duplicate evidence row: {identifier} line={line_number}")
+            continue
+        rows[identifier] = fields
+
+    missing = [identifier for identifier in _EVIDENCE_IDS if identifier not in rows]
+    if missing:
+        errors.append(f"missing evidence rows: {', '.join(missing)}")
+
+    for identifier, fields in rows.items():
+        _id, command, image, env_hash, gpu, result, artifact = fields
+        if result not in {"PASS", "FAIL", "INCOMPLETE"}:
+            errors.append(f"{identifier}: invalid result {result!r}")
+            continue
+        if result in {"PASS", "FAIL"}:
+            bound = (command, image, env_hash, gpu, artifact)
+            if any(not value or "not-run" in value.lower() for value in bound):
+                errors.append(
+                    f"{identifier}: {result} cannot contain empty/not-run evidence"
+                )
+            if result == "PASS" and not image.startswith("sha256:"):
+                errors.append(f"{identifier}: PASS image digest must start sha256:")
+            if result == "PASS" and not env_hash.startswith("sha256:"):
+                errors.append(f"{identifier}: PASS env hash must start sha256:")
+    return errors
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -145,12 +201,23 @@ def main() -> int:
         default=Path(__file__).resolve().parents[2],
         help="repository root",
     )
+    parser.add_argument(
+        "--evidence",
+        type=Path,
+        help="optional A100 evidence markdown table",
+    )
     args = parser.parse_args()
     errors = validate_repository(args.root)
+    if args.evidence is not None:
+        errors.extend(validate_evidence(args.evidence))
     for error in errors:
         print(f"ERROR {error}")
     env_files = list((args.root / "deploy").rglob(".env"))
-    print(f"lanes={len(LANES)} env_files={len(env_files)} errors={len(errors)}")
+    evidence = str(args.evidence) if args.evidence is not None else "not-requested"
+    print(
+        f"lanes={len(LANES)} env_files={len(env_files)} "
+        f"evidence={evidence} errors={len(errors)}"
+    )
     return 1 if errors else 0
 
 

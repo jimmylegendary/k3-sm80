@@ -1,0 +1,33 @@
+diff --git a/vllm/models/kimi_k3/nvidia/mla.py b/vllm/models/kimi_k3/nvidia/mla.py
+index b3fc64b87..a5e537bf2 100644
+--- a/vllm/models/kimi_k3/nvidia/mla.py
++++ b/vllm/models/kimi_k3/nvidia/mla.py
+@@ -268,13 +268,23 @@ class MultiHeadLatentAttention(nn.Module, AttentionLayerBase):
+             self.kv_cache_dtype = cache_config.cache_dtype
+         else:
+             self.kv_cache_dtype = "auto"
+-        self._k3_sm80_software_fp8 = bool(envs.VLLM_K3_SM80_FP8_KV)
++
++        # DSpark reuses this class after the 93 target layers.  Lane 05 keeps
++        # those five RoPE draft caches in BF16 while the target MLA caches use
++        # software E4M3FN storage on SM80.
++        if cache_config is not None and cache_config.kv_cache_dtype_skip_layers:
++            from vllm.model_executor.models.utils import extract_layer_index
++
++            layer_idx = extract_layer_index(prefix)
++            if str(layer_idx) in cache_config.kv_cache_dtype_skip_layers:
++                self.kv_cache_dtype = "auto"
++
++        self._k3_sm80_software_fp8 = bool(
++            envs.VLLM_K3_SM80_FP8_KV
++            and self.kv_cache_dtype in ("fp8", "fp8_e4m3")
++        )
+         if self._k3_sm80_software_fp8:
+             cap = current_platform.get_device_capability()
+-            if self.kv_cache_dtype not in ("fp8", "fp8_e4m3"):
+-                raise ValueError(
+-                    "VLLM_K3_SM80_FP8_KV=1 requires --kv-cache-dtype fp8"
+-                )
+             if not (
+                 current_platform.is_cuda()
+                 and current_platform.has_device_capability(80)

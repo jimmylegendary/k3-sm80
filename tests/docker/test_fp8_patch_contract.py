@@ -6,6 +6,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PATCH = REPO_ROOT / "docker" / "patches" / "mla-fp8-kv-sm80.patch"
+DSPARK_PATCH = (
+    REPO_ROOT / "docker" / "patches" / "mla-fp8-kv-sm80-dspark-bf16.patch"
+)
 DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile.openai"
 VERIFY = REPO_ROOT / "docker" / "verify_image.py"
 
@@ -61,6 +64,15 @@ class Fp8PatchContractTest(unittest.TestCase):
         self.assertIn("mla-fp8-kv-sm80-v1", dockerfile)
         self.assertIn("mla-fp8-kv-sm80-v1", verify)
         self.assertIn("VLLM_K3_SM80_FP8_KV", verify)
+
+    def test_lane05_can_skip_only_the_five_rope_draft_caches(self) -> None:
+        patch = DSPARK_PATCH.read_text(encoding="utf-8")
+
+        self.assertIn("cache_config.kv_cache_dtype_skip_layers", patch)
+        self.assertIn("extract_layer_index(prefix)", patch)
+        self.assertIn('self.kv_cache_dtype = "auto"', patch)
+        self.assertIn('self.kv_cache_dtype in ("fp8", "fp8_e4m3")', patch)
+        self.assertIn("mla-fp8-kv-sm80-dspark-bf16.patch", DOCKERFILE.read_text())
 
 
 if __name__ == "__main__":

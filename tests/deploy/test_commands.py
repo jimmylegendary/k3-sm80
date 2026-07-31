@@ -72,6 +72,19 @@ class VllmCommandTest(unittest.TestCase):
             args[args.index("--data-parallel-rpc-port") + 1],
             env.values["VLLM_DP_RPC_PORT"],
         )
+        skip_index = args.index("--kv-cache-dtype-skip-layers")
+        self.assertEqual(args[skip_index + 1 : skip_index + 6], ["93", "94", "95", "96", "97"])
+
+    def test_only_lane_05_keeps_dspark_rope_cache_in_bf16(self) -> None:
+        for lane_id in (
+            "01-tp8-pp4-256k-safe",
+            "02-tp8-dp4-ep32-256k-safe",
+            "03-tp8-dp4-ep32-256k-dspark",
+            "04-tp8-dp4-ep32-1m-fp8kv",
+        ):
+            with self.subTest(lane=lane_id):
+                args = build_vllm_args(self.load_lane(lane_id), node_rank=0)
+                self.assertNotIn("--kv-cache-dtype-skip-layers", args)
 
     def test_all_explicit_serving_controls_are_emitted(self) -> None:
         env = self.load_lane("02-tp8-dp4-ep32-256k-safe")
