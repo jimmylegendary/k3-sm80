@@ -76,6 +76,16 @@ MXFP4_E2M1_VALUES = (
 SITU_BETA = 4.0              # §1 hidden_act situ (SiTU-GLU; β=4.0)
 SITU_LINEAR_BETA = 25.0      # §1 linear-β=25.0
 
+# DSpark integration gate cases.  k10 is an integration gate rather than an S2
+# kernel, so it is intentionally not added to KERNEL_IDS/run_all.
+DSPARK_REQUIRED_CASES = {
+    **{f"greedy_accept_{accepted}": {"accepted": accepted}
+       for accepted in range(8)},
+    "probabilistic_block": {"block_size": 7},
+    "ctx256k": {"context": 262_144},
+    "ctx1m": {"context": 1_048_576},
+}
+
 # ---------------------------------------------------------------------------
 # 5) S2 테스트 매트릭스 (docs/PLAN.md §S2 완료판정 3: 배치 1/8/32, ctx 8k/128k 대표점)
 # ---------------------------------------------------------------------------
