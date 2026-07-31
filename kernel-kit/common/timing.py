@@ -135,6 +135,10 @@ PERF_POLICY = {
         mode="optional", eff_floor=0.30,
         basis="PLAN 커널 표: SiTU는 언퓨즈드 참조로 대체(성능 후순위) — 측정 없으면 "
               "SKIP(성능 후순위), 측정 제공 시에만 0.30 바 적용."),
+    "k08_mxfp4_marlin_moe": dict(
+        eff_floor=0.40,
+        basis="원본 MXFP4 weight-only Marlin MoE의 최초 SM80 gate. k05 W4A16과 같은 "
+              "보수적 루프라인 효율 0.40을 사용하고 TP8/EP32 양 arm을 별도 기록."),
 }
 
 

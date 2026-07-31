@@ -1,0 +1,1 @@
+"""Standalone kernel contract tests."""

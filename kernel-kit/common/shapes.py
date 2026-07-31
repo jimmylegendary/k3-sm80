@@ -69,6 +69,10 @@ MLA_NOPE = True              # §3 assert self.use_nope, rotary_emb=None
 EXPERT_P = 33_030_144        # §3 expert 1개 w1+w2+w3 = 3×3584×3072
 BPP_MXFP4 = 0.53125          # §4 MXFP4(E2M1) group32 + E8M0 scale → B/param
 BPP_W4A16 = 0.515625         # §6 INT4 g128 + fp16 scale → B/param
+MXFP4_E2M1_VALUES = (
+    0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
+    -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
+)
 SITU_BETA = 4.0              # §1 hidden_act situ (SiTU-GLU; β=4.0)
 SITU_LINEAR_BETA = 25.0      # §1 linear-β=25.0
 
@@ -86,6 +90,7 @@ KERNEL_IDS = (
     "k05_marlin_moe_w4a16",  # Marlin W4A16 MoE (crash 예상 → S3 입력)
     "k06_dequant_bench",     # dequant 마이크로벤치 (phase0 모델 재보정용)
     "k07_situ_act",          # SiTU 언퓨즈드 참조 (성능 후순위)
+    "k08_mxfp4_marlin_moe",  # 원본 MXFP4 checkpoint → Marlin MoE SM80
 )
 
 KERNEL_TITLES = {
@@ -96,6 +101,7 @@ KERNEL_TITLES = {
     "k05_marlin_moe_w4a16": "Marlin W4A16 MoE (marlin_moe_wna16, #35922 대상)",
     "k06_dequant_bench": "W4A16 dequant 마이크로벤치 (dequant_ops/param 재보정)",
     "k07_situ_act": "SiTU-GLU 언퓨즈드 참조 activation",
+    "k08_mxfp4_marlin_moe": "Original MXFP4 Marlin MoE (TP8/EP32 SM80 gate)",
 }
 
 # SHAPES 게이트 요구 커버리지: 케이스 이름 → 케이스 파라미터.
@@ -156,6 +162,12 @@ REQUIRED_SHAPES = {
         "shared_inter6144_m32": dict(m=32, n=SHARED_FUSED_INTER),
         "dense_inter33792_m32": dict(m=32, n=DENSE_INTER),
         "shared_inter6144_m8192": dict(m=8192, n=SHARED_FUSED_INTER),
+    },
+    "k08_mxfp4_marlin_moe": {
+        "m1": dict(m=1, k=LATENT, n=MOE_INTER, e=N_EXPERTS, topk=TOPK),
+        "m8": dict(m=8, k=LATENT, n=MOE_INTER, e=N_EXPERTS, topk=TOPK),
+        "m32": dict(m=32, k=LATENT, n=MOE_INTER, e=N_EXPERTS, topk=TOPK),
+        "prefill": dict(m=8192, k=LATENT, n=MOE_INTER, e=N_EXPERTS, topk=TOPK),
     },
 }
 
@@ -256,6 +268,17 @@ def perf_bytes_model(kernel_id: str, **case) -> dict:
         n = case["n"]
         out.update(bytes=m * n * 2 * 3, alu_ops=m * n * 12.0,
                    note="gate/up 읽기 + out 쓰기 bf16; SiTU 초월함수 ~12 ops/elem 가정")
+    elif kernel_id == "k08_mxfp4_marlin_moe":
+        uniq = min(m * case.get("topk", TOPK), case.get("e", N_EXPERTS))
+        params = 3 * case.get("k", LATENT) * case.get("n", MOE_INTER)
+        weight_bytes = uniq * params * BPP_MXFP4
+        macs = m * case.get("topk", TOPK) * params
+        out.update(
+            bytes=weight_bytes,
+            macs=macs,
+            alu_ops=uniq * params * 4.0,
+            note="원본 MXFP4(0.53125B/p) routed expert 가중치 + BF16 dequant Marlin",
+        )
     else:
         raise KeyError(f"미등록 커널 id: {kernel_id}")
     return out

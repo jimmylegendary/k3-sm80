@@ -76,6 +76,11 @@ TOL: dict[str, TolPolicy] = {
         basis="elementwise 초월함수(SiTU β=4.0/linear-β=25.0): torch.testing bf16 기본"
               "(rtol=1.6e-2, atol=1e-5) + RMSE-ratio 4e-3. mismatch 1e-4는 sigmoid 포화 "
               "경계의 최종 ulp 반올림 갈림 허용."),
+    "k08_mxfp4_marlin_moe": TolPolicy(
+        rel_mean_abs=4e-2, atol=4e-2, rtol=0.0, mismatch_frac=0.0,
+        basis="MXFP4 E2M1+E8M0 logical dequant FP32 reference vs Marlin BF16 output. "
+              "vLLM test_marlin_gemm.py@d223c900의 compute_max_diff<0.04와 "
+              "test_moe.py atol=4e-2/rtol=0을 동일 적용."),
 }
 
 
