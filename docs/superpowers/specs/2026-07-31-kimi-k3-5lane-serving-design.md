@@ -203,28 +203,32 @@ c01은 CUDA kernel gate가 아니라 4-node communication/integration gate다.
 
 ```text
 deploy/
-  .env
   01-tp8-pp4-256k-safe/
+    .env
     compose.yaml
     Makefile
     RUNBOOK.md
     scripts/
   02-tp8-dp4-ep32-256k-safe/
+    .env
     compose.yaml
     Makefile
     RUNBOOK.md
     scripts/
   03-tp8-dp4-ep32-256k-dspark/
+    .env
     compose.yaml
     Makefile
     RUNBOOK.md
     scripts/
   04-tp8-dp4-ep32-1m-fp8kv/
+    .env
     compose.yaml
     Makefile
     RUNBOOK.md
     scripts/
   05-tp8-dp4-ep32-1m-fp8kv-dspark/
+    .env
     compose.yaml
     Makefile
     RUNBOOK.md
@@ -240,19 +244,20 @@ Compose/Makefile/scripts도 repository에 커밋한다. 따라서 사내 반입 
 실행 가능하고, CI는 재생성 diff가 0인지 검사해 drift를 막는다.
 
 각 Compose는 하나의 파일에 `head`, `worker1`, `worker2`, `worker3` profile을 모두
-포함한다. 다섯 lane과 네 노드는 `deploy/.env` **한 파일만** 공유한다. lane 폴더 안이나
-노드별 `.env`를 추가하지 않는다. 각 Makefile은 Compose를 항상
-`docker compose --env-file ../.env`로 호출해 현재 working directory에 따른 auto-load
+포함한다. 각 lane 폴더는 `.env`를 정확히 하나만 가지며, 해당 lane의 네 노드가 그 파일을
+공유한다. node별 `.env`나 두 번째 override env를 만들지 않는다. 따라서 전체 repository에는
+lane별 1개씩 총 5개 `.env`가 존재한다. 각 Makefile은 Compose를 항상
+`docker compose --env-file .env`로 호출해 현재 working directory에 따른 auto-load
 차이를 제거한다.
 
-`deploy/.env`는 secret store가 아니라 사내 배포 control plane이다. node IP, SSH
+각 lane의 `.env`는 secret store가 아니라 사내 배포 control plane이다. node IP, SSH
 host/user, NCCL interface, image/model 경로와 vLLM serving option을 `${VAR}`
 interpolation으로 Compose command/environment에 전달한다. 미확정 값은 `CHANGE_ME_*`
 literal로 기록하고 preflight가 잔존 sentinel을 거부한다. API token 등 실제 secret이
 필요하면 이 파일에 평문으로 커밋하지 않고 Docker secret/file mount를 별도 승인 후
 추가한다.
 
-### 단일 `.env` 변수 계약
+### lane별 단일 `.env` 변수 계약
 
 공통 변수:
 
@@ -277,39 +282,39 @@ K3_ENGINE_READY_TIMEOUT_S
 K3_EXECUTE_MODEL_TIMEOUT_S
 ```
 
-vLLM option은 lane prefix `L01_`~`L05_`로 분리한다. 각 lane은 자신에게 해당하는
-prefix만 읽으므로 한 lane을 조정해도 다른 lane command가 암묵적으로 바뀌지 않는다.
+각 lane이 별도 `.env`를 가지므로 vLLM option은 모든 lane에서 동일한 `VLLM_*` 이름을
+사용한다. 환경 간 차이는 해당 lane의 `.env` 값으로 표현한다.
 
 ```text
-L0N_VLLM_API_PORT
-L0N_VLLM_MASTER_PORT
-L0N_VLLM_DP_RPC_PORT
-L0N_VLLM_TENSOR_PARALLEL_SIZE
-L0N_VLLM_PIPELINE_PARALLEL_SIZE
-L0N_VLLM_DATA_PARALLEL_SIZE
-L0N_VLLM_ENABLE_EXPERT_PARALLEL
-L0N_VLLM_ALL2ALL_BACKEND
-L0N_VLLM_MOE_BACKEND
-L0N_VLLM_ATTENTION_BACKEND
-L0N_VLLM_QUANTIZATION
-L0N_VLLM_DTYPE
-L0N_VLLM_KV_CACHE_DTYPE
-L0N_VLLM_MAX_MODEL_LEN
-L0N_VLLM_MAX_NUM_SEQS
-L0N_VLLM_MAX_NUM_BATCHED_TOKENS
-L0N_VLLM_GPU_MEMORY_UTILIZATION
-L0N_VLLM_ENFORCE_EAGER
-L0N_VLLM_ENABLE_PREFIX_CACHING
-L0N_VLLM_LANGUAGE_MODEL_ONLY
-L0N_VLLM_COMPILATION_CONFIG
-L0N_VLLM_SPECULATIVE_CONFIG
-L0N_VLLM_SERVED_MODEL_NAME
-L0N_VLLM_TOOL_CALL_PARSER
-L0N_VLLM_REASONING_PARSER
-L0N_VLLM_EXTRA_ARGS
+VLLM_API_PORT
+VLLM_MASTER_PORT
+VLLM_DP_RPC_PORT
+VLLM_TENSOR_PARALLEL_SIZE
+VLLM_PIPELINE_PARALLEL_SIZE
+VLLM_DATA_PARALLEL_SIZE
+VLLM_ENABLE_EXPERT_PARALLEL
+VLLM_ALL2ALL_BACKEND
+VLLM_MOE_BACKEND
+VLLM_ATTENTION_BACKEND
+VLLM_QUANTIZATION
+VLLM_DTYPE
+VLLM_KV_CACHE_DTYPE
+VLLM_MAX_MODEL_LEN
+VLLM_MAX_NUM_SEQS
+VLLM_MAX_NUM_BATCHED_TOKENS
+VLLM_GPU_MEMORY_UTILIZATION
+VLLM_ENFORCE_EAGER
+VLLM_ENABLE_PREFIX_CACHING
+VLLM_LANGUAGE_MODEL_ONLY
+VLLM_COMPILATION_CONFIG
+VLLM_SPECULATIVE_CONFIG
+VLLM_SERVED_MODEL_NAME
+VLLM_TOOL_CALL_PARSER
+VLLM_REASONING_PARSER
+VLLM_EXTRA_ARGS
 ```
 
-`L0N_VLLM_EXTRA_ARGS`는 pinned schema에서 검증되는 추가 flag만 허용한다. topology,
+`VLLM_EXTRA_ARGS`는 pinned schema에서 검증되는 추가 flag만 허용한다. topology,
 quantization, context, cache 및 speculative 관련 핵심 option은 `EXTRA_ARGS`로
 중복 지정할 수 없다. validator가 shell tokenization 후 duplicate/conflicting option을
 거부한다.
@@ -333,7 +338,7 @@ shared paths:
 
 - `make preflight`: sentinel, image digest, 8×A100/node, shared cache revision,
   단일 `.env` schema, ports/interfaces, lane-specific stamps 확인
-- `make config`: lane prefix가 적용된 vLLM command와 4-node table을 출력
+- `make config`: lane `.env`가 적용된 vLLM command와 4-node table을 출력
 - `make gates`: 필요한 k08/k09/k10/c01 및 integration gate 실행
 - `make up`: head profile 시작 후 SSH로 worker profiles 병렬 시작
 - `make status`: 4노드 process/rank/GPU/API와 DP/EP group 상태
@@ -355,7 +360,7 @@ Ray와 external launcher는 사용하지 않는다.
 
 1. 이 lane이 검증하는 것과 검증하지 않는 것
 2. topology와 GPU/rank mapping
-3. 단일 `deploy/.env`에서 이 lane과 공통으로 채워야 할 `CHANGE_ME_*` 목록
+3. 이 lane의 단일 `.env`에서 채워야 할 `CHANGE_ME_*` 목록
 4. 필요한 model/draft snapshot revision과 offline cache 확인법
 5. image 반입/load/digest 확인
 6. `make preflight`
@@ -443,8 +448,8 @@ c01 + k08 EP arm --> 02 TP/DP/EP 256k
 구현 완료는 파일 생성만을 뜻하지 않는다.
 
 1. 5개 lane 폴더가 각자 Compose/Makefile/RUNBOOK/scripts를 포함
-2. 각 Compose에 4개 node profile이 있고 전체 배포에 `deploy/.env` 하나만 존재
-3. 단일 `.env`가 공통 cluster 값과 lane별 vLLM serving option을 모두 제어
+2. 각 Compose에 4개 node profile이 있고 각 lane 폴더에 `.env`가 정확히 하나만 존재
+3. 각 lane의 단일 `.env`가 해당 lane의 cluster 값과 vLLM serving option을 모두 제어
 4. static/schema/unit test 및 generator drift test PASS
 5. host CPU dry-run이 GPU 실행을 PASS로 사칭하지 않음
 6. 사내 A100에서 lane별 필수 gate 결과가 stable error code로 기록됨
