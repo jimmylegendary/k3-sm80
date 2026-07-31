@@ -1,0 +1,40 @@
+diff --git a/vllm/models/kimi_k3/nvidia/ops/third_party/kda/chunk.py b/vllm/models/kimi_k3/nvidia/ops/third_party/kda/chunk.py
+index 1f93eff..875306f 100644
+--- a/vllm/models/kimi_k3/nvidia/ops/third_party/kda/chunk.py
++++ b/vllm/models/kimi_k3/nvidia/ops/third_party/kda/chunk.py
+@@ -307,7 +307,10 @@ def chunk_gla_fwd_kernel_o(
+             (1, 0),
+         )
+         p_h = tl.make_block_ptr(
+-            h + (i_tg * H + i_h) * K * V,
++            # SM80: h exceeds 2^31 elements at long context. Cast the head/chunk
++            # index before multiplying by K*V, otherwise Triton wraps the i32
++            # intermediate and the load becomes an illegal memory access.
++            h + (i_tg * H + i_h).to(tl.int64) * K * V,
+             (V, K),
+             (K, 1),
+             (i_v * BV, i_k * BK),
+diff --git a/vllm/third_party/flash_linear_attention/ops/chunk_delta_h.py b/vllm/third_party/flash_linear_attention/ops/chunk_delta_h.py
+index 79151d0..7f7028f 100644
+--- a/vllm/third_party/flash_linear_attention/ops/chunk_delta_h.py
++++ b/vllm/third_party/flash_linear_attention/ops/chunk_delta_h.py
+@@ -96,12 +96,14 @@ def chunk_gated_delta_rule_fwd_kernel_h_blockdim64(
+         b_h4 = tl.zeros([BV, 64], dtype=tl.float32)
+ 
+     # calculate offset
+-    h += ((boh * H + i_h) * V * K).to(tl.int64)
+-    v += ((bos * H + i_h) * V).to(tl.int64)
+-    k += ((bos * Hg + i_h // (H // Hg)) * K).to(tl.int64)
+-    w += ((bos * H + i_h) * K).to(tl.int64)
++    # Cast before multiplication. Casting the already-overflowed i32 product
++    # does not protect long-context SM80 executions.
++    h += (boh * H + i_h).to(tl.int64) * V * K
++    v += (bos * H + i_h).to(tl.int64) * V
++    k += (bos * Hg + i_h // (H // Hg)).to(tl.int64) * K
++    w += (bos * H + i_h).to(tl.int64) * K
+     if SAVE_NEW_VALUE:
+-        v_new += ((bos * H + i_h) * V).to(tl.int64)
++        v_new += (bos * H + i_h).to(tl.int64) * V
+     stride_v = H * V
+     stride_h = H * V * K
+     stride_k = Hg * K

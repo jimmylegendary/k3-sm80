@@ -5,3 +5,4 @@ docker/logs/
 kernel-kit/kernel-report/
 .dl-*/
 deploy/0*-*/.k3-cluster.lock
+docker/releases/
