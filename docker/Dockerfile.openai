@@ -23,6 +23,7 @@ USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        build-essential ccache cuda-nvrtc-dev-13-0 \
+       libcusolver-dev-13-0 libcusparse-dev-13-0 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/vllm
 RUN git clone --filter=blob:none https://github.com/vllm-project/vllm.git . \

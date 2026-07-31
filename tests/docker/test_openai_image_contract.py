@@ -27,6 +27,8 @@ class OpenAIImageContractTest(unittest.TestCase):
         self.assertIn("0498dc7ea9204f1863b46515816f5d8d458e01e7", dockerfile)
         self.assertIn("sha256:d5fc27444ec6a9f52ac18a81acd88394f1840ce747c3eb989a5b4b0316079752", dockerfile)
         self.assertIn("TORCH_CUDA_ARCH_LIST=8.0", dockerfile)
+        self.assertIn("libcusparse-dev-13-0", dockerfile)
+        self.assertIn("libcusolver-dev-13-0", dockerfile)
         self.assertIn("kda-sm80-int64.patch", dockerfile)
         self.assertIn("mla-fp8-kv-sm80-dspark-bf16.patch", dockerfile)
         self.assertIn('ENTRYPOINT ["vllm", "serve"]', dockerfile)
