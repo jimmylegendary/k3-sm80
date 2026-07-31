@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import unittest
 from pathlib import Path
@@ -8,6 +9,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = REPO_ROOT / "docker" / "Dockerfile.openai"
 PATCH = REPO_ROOT / "docker" / "patches" / "kda-sm80-int64.patch"
+VERIFY = REPO_ROOT / "docker" / "verify_image.py"
+
+
+def load_verify_module():
+    spec = importlib.util.spec_from_file_location("k3_verify_image", VERIFY)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class OpenAIImageContractTest(unittest.TestCase):
@@ -65,6 +75,28 @@ class OpenAIImageContractTest(unittest.TestCase):
         )
         self.assertEqual(verify.returncode, 0, verify.stderr)
         self.assertIn("IMAGE", verify.stdout)
+
+    def test_verify_requires_all_lane_cli_flags(self) -> None:
+        module = load_verify_module()
+        required = set(module.REQUIRED_SERVE_FLAGS)
+
+        self.assertTrue(
+            {
+                "--headless",
+                "--data-parallel-backend",
+                "--distributed-executor-backend",
+                "--nnodes",
+                "--node-rank",
+                "--kda-prefill-backend",
+                "--moe-backend",
+                "--kv-cache-dtype-skip-layers",
+            }.issubset(required)
+        )
+        self.assertEqual(module.required_cli_errors("\n".join(required)), [])
+        self.assertEqual(
+            module.required_cli_errors("\n".join(required - {"--headless"})),
+            ["vllm serve --help missing flag: --headless"],
+        )
 
 
 if __name__ == "__main__":

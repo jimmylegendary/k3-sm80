@@ -21,6 +21,30 @@ EXPECTED_LABELS = {
     "io.k3.base_digest": BASE_DIGEST,
 }
 
+REQUIRED_SERVE_FLAGS = (
+    "--distributed-executor-backend",
+    "--data-parallel-backend",
+    "--nnodes",
+    "--node-rank",
+    "--master-addr",
+    "--master-port",
+    "--headless",
+    "--tensor-parallel-size",
+    "--pipeline-parallel-size",
+    "--data-parallel-size",
+    "--data-parallel-rpc-port",
+    "--enable-expert-parallel",
+    "--all2all-backend",
+    "--moe-backend",
+    "--attention-backend",
+    "--attention-config",
+    "--kda-prefill-backend",
+    "--quantization",
+    "--kv-cache-dtype",
+    "--kv-cache-dtype-skip-layers",
+    "--speculative-config",
+)
+
 
 def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     try:
@@ -119,6 +143,14 @@ def container_probe(image: str, *, gpu: bool) -> list[str]:
     return []
 
 
+def required_cli_errors(help_text: str) -> list[str]:
+    return [
+        f"vllm serve --help missing flag: {flag}"
+        for flag in REQUIRED_SERVE_FLAGS
+        if flag not in help_text
+    ]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", metavar="IMAGE")
@@ -133,24 +165,24 @@ def main() -> int:
     if metadata is not None:
         errors.extend(metadata_errors(metadata))
         errors.extend(container_probe(args.image, gpu=False))
+        help_result = run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "vllm",
+                args.image,
+                "serve",
+                "--help",
+            ]
+        )
+        if help_result.returncode:
+            errors.append(f"vllm serve --help rc={help_result.returncode}")
+        else:
+            errors.extend(required_cli_errors(help_result.stdout))
         if args.gpu:
             errors.extend(container_probe(args.image, gpu=True))
-            help_result = run(
-                [
-                    "docker",
-                    "run",
-                    "--rm",
-                    "--gpus",
-                    "all",
-                    "--entrypoint",
-                    "vllm",
-                    args.image,
-                    "serve",
-                    "--help",
-                ]
-            )
-            if help_result.returncode:
-                errors.append(f"vllm serve --help rc={help_result.returncode}")
 
     for error in errors:
         print(f"K3-OPENAI-VERIFY-FAIL {error}", file=sys.stderr)

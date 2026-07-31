@@ -13,6 +13,8 @@
   `k09`(SM80 software FP8 KV), `k10`(DSpark state/integration)로 분리했다.
 - 5개 lane의 Compose/Makefile/단일 `.env`/Runbook은
   `deploy/01-*`부터 `deploy/05-*`에 있다. 모두 native vLLM MP이며 Ray를 쓰지 않는다.
+  `--distributed-executor-backend mp`와 `--data-parallel-backend mp`를 함께
+  고정하고, node rank 0만 API를 열며 rank 1–3은 `--headless`로 실행한다.
 - 개발 host의 정적·CPU contract PASS는 A100 kernel/service PASS가 아니다. 실제 결과는
   `docs/A100-5LANE-RESULTS.md`에서 현재 모두 `INCOMPLETE`로 시작한다.
 
