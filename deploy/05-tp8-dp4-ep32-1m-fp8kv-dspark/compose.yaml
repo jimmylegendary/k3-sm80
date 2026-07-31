@@ -1,0 +1,93 @@
+name: k3-sm80-05
+
+x-k3-common: &k3-common
+  image: ${K3_IMAGE}
+  network_mode: host
+  ipc: host
+  shm_size: 16gb
+  gpus: all
+  restart: "no"
+  env_file:
+    - .env
+  environment: &k3-environment
+    HF_HOME: ${K3_HF_HOME}
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    NCCL_SOCKET_IFNAME: ${K3_NCCL_SOCKET_IFNAME}
+    GLOO_SOCKET_IFNAME: ${K3_GLOO_SOCKET_IFNAME}
+    NCCL_IB_HCA: ${K3_NCCL_IB_HCA}
+    NCCL_IB_GID_INDEX: ${K3_NCCL_IB_GID_INDEX}
+    VLLM_ENGINE_READY_TIMEOUT_S: ${K3_ENGINE_READY_TIMEOUT_S}
+    VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: ${K3_EXECUTE_MODEL_TIMEOUT_S}
+  volumes:
+    - ${K3_HF_HOME}:${K3_HF_HOME}:ro
+    - ${K3_SERVING_ROOT}:${K3_SERVING_ROOT}
+    - ./scripts:/opt/k3-lane/scripts:ro
+    - ./.env:/opt/k3-lane/.env:ro
+  entrypoint: ["python3", "/opt/k3-lane/scripts/cluster.py"]
+  ulimits:
+    memlock:
+      soft: -1
+      hard: -1
+    stack: 67108864
+
+services:
+  k3-head:
+    <<: *k3-common
+    container_name: k3-05-head
+    profiles: ["head"]
+    command: ["serve", "--node-rank", "0"]
+    environment:
+      <<: *k3-environment
+      K3_NODE_RANK: "0"
+      K3_NODE_IP: ${K3_HEAD_NODE_IP}
+    labels:
+      io.k3.lane: "05-tp8-dp4-ep32-1m-fp8kv-dspark"
+      io.k3.node-rank: "0"
+      io.k3.ssh-host: ${K3_HEAD_SSH_HOST}
+      io.k3.ssh-user: ${K3_HEAD_SSH_USER}
+
+  k3-worker1:
+    <<: *k3-common
+    container_name: k3-05-worker1
+    profiles: ["worker1"]
+    command: ["serve", "--node-rank", "1"]
+    environment:
+      <<: *k3-environment
+      K3_NODE_RANK: "1"
+      K3_NODE_IP: ${K3_WORKER1_NODE_IP}
+    labels:
+      io.k3.lane: "05-tp8-dp4-ep32-1m-fp8kv-dspark"
+      io.k3.node-rank: "1"
+      io.k3.ssh-host: ${K3_WORKER1_SSH_HOST}
+      io.k3.ssh-user: ${K3_WORKER1_SSH_USER}
+
+  k3-worker2:
+    <<: *k3-common
+    container_name: k3-05-worker2
+    profiles: ["worker2"]
+    command: ["serve", "--node-rank", "2"]
+    environment:
+      <<: *k3-environment
+      K3_NODE_RANK: "2"
+      K3_NODE_IP: ${K3_WORKER2_NODE_IP}
+    labels:
+      io.k3.lane: "05-tp8-dp4-ep32-1m-fp8kv-dspark"
+      io.k3.node-rank: "2"
+      io.k3.ssh-host: ${K3_WORKER2_SSH_HOST}
+      io.k3.ssh-user: ${K3_WORKER2_SSH_USER}
+
+  k3-worker3:
+    <<: *k3-common
+    container_name: k3-05-worker3
+    profiles: ["worker3"]
+    command: ["serve", "--node-rank", "3"]
+    environment:
+      <<: *k3-environment
+      K3_NODE_RANK: "3"
+      K3_NODE_IP: ${K3_WORKER3_NODE_IP}
+    labels:
+      io.k3.lane: "05-tp8-dp4-ep32-1m-fp8kv-dspark"
+      io.k3.node-rank: "3"
+      io.k3.ssh-host: ${K3_WORKER3_SSH_HOST}
+      io.k3.ssh-user: ${K3_WORKER3_SSH_USER}
