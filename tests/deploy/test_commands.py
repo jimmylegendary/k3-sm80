@@ -126,6 +126,14 @@ class VllmCommandTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "node_rank"):
                     build_vllm_args(env, node_rank=invalid)
 
+    def test_only_worker_nodes_are_headless(self) -> None:
+        env = self.load_lane("02-tp8-dp4-ep32-256k-safe")
+
+        self.assertNotIn("--headless", build_vllm_args(env, node_rank=0))
+        for node_rank in (1, 2, 3):
+            with self.subTest(node_rank=node_rank):
+                self.assertIn("--headless", build_vllm_args(env, node_rank=node_rank))
+
     def test_extra_args_cannot_override_managed_flags(self) -> None:
         for args in (
             ["--max-model-len", "1024"],
@@ -134,6 +142,7 @@ class VllmCommandTest(unittest.TestCase):
             ["--speculative-config", "{}"],
             ["--model", "other/model"],
             ["--nnodes", "1"],
+            ["--headless"],
         ):
             with self.subTest(args=args):
                 with self.assertRaisesRegex(ValueError, "managed"):

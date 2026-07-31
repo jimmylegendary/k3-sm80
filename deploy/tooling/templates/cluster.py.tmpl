@@ -60,6 +60,8 @@ def serve_args(node_rank: int) -> list[str]:
     add_bool(args, "VLLM_ENFORCE_EAGER", "--enforce-eager")
     add_bool(args, "VLLM_ENABLE_PREFIX_CACHING", "--enable-prefix-caching")
     add_bool(args, "VLLM_LANGUAGE_MODEL_ONLY", "--language-model-only")
+    if node_rank > 0:
+        args.append("--headless")
     if value("VLLM_SPECULATIVE_CONFIG"):
         args.extend(["--speculative-config", value("VLLM_SPECULATIVE_CONFIG")])
     if value("VLLM_KV_CACHE_DTYPE_SKIP_LAYERS"):

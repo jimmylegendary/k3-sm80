@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import runpy
 import shlex
 import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from deploy.tooling.command import build_vllm_args
 from deploy.tooling.lane_schema import LaneEnv
@@ -43,6 +45,17 @@ class ClusterEntrypointTest(unittest.TestCase):
                     actual = shlex.split(result.stdout.split(marker, 1)[1].strip())
                     expected = ["vllm", "serve", *build_vllm_args(parsed, rank)]
                     self.assertEqual(actual, expected)
+
+    def test_worker_profiles_are_headless_but_head_profile_is_not(self) -> None:
+        lane = REPO_ROOT / "deploy" / "02-tp8-dp4-ep32-256k-safe"
+        env = LaneEnv.load(lane / ".env")
+        namespace = runpy.run_path(str(lane / "scripts" / "cluster.py"))
+
+        with patch.dict(os.environ, env.values, clear=True):
+            self.assertNotIn("--headless", namespace["serve_args"](0))
+            for node_rank in (1, 2, 3):
+                with self.subTest(node_rank=node_rank):
+                    self.assertIn("--headless", namespace["serve_args"](node_rank))
 
 
 if __name__ == "__main__":

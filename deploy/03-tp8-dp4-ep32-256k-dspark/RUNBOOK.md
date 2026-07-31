@@ -12,13 +12,15 @@ software FP8 KV=0다. 필수 최종 gate는 `k08 c01 k10 ep dspark`다.
 | node/profile | node rank | local GPU | 역할 |
 |---|---:|---:|---|
 | head | 0 | 0–7 | API + native MP launcher |
-| worker1 | 1 | 0–7 | native MP worker |
-| worker2 | 2 | 0–7 | native MP worker |
-| worker3 | 3 | 0–7 | native MP worker |
+| worker1 | 1 | 0–7 | native MP `--headless` worker |
+| worker2 | 2 | 0–7 | native MP `--headless` worker |
+| worker3 | 3 | 0–7 | native MP `--headless` worker |
 
 world size는 TP8 × PP1 × DP4 = 32다. Ray를 쓰지 않고
 `--distributed-executor-backend mp --data-parallel-backend mp --nnodes 4`를
 명시하여 실행기와 DP 제어면을 모두 native MP로 고정한다.
+node rank 0만 OpenAI API를 열고, rank 1–3은 `--headless`로 engine만
+실행한다.
 
 ## 3. 단일 `.env`
 

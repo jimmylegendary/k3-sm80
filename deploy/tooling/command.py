@@ -47,6 +47,7 @@ _MANAGED_LONG_FLAGS = frozenset(
         "--enable-prefix-caching",
         "--no-enable-prefix-caching",
         "--language-model-only",
+        "--headless",
         "--compilation-config",
         "--speculative-config",
         "--served-model-name",
@@ -204,6 +205,8 @@ def build_vllm_args(env: LaneEnv, node_rank: int) -> list[str]:
     _add_bool(args, v["VLLM_ENFORCE_EAGER"], "--enforce-eager")
     _add_bool(args, v["VLLM_ENABLE_PREFIX_CACHING"], "--enable-prefix-caching")
     _add_bool(args, v["VLLM_LANGUAGE_MODEL_ONLY"], "--language-model-only")
+    if node_rank > 0:
+        args.append("--headless")
 
     if v["VLLM_SPECULATIVE_CONFIG"]:
         args.extend(["--speculative-config", v["VLLM_SPECULATIVE_CONFIG"]])
