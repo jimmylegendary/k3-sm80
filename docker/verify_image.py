@@ -130,6 +130,22 @@ for index in range(8):
 print("GPU_CONTRACT_PASS devices=8 arch=sm80")
 """
 
+CLI_HELP_PROBE = r"""
+import sys
+import vllm.platforms as platforms
+from vllm.platforms.cpu import CpuPlatform
+
+# `vllm serve --help` materializes DeviceConfig defaults before parsing any
+# arguments.  A CPU-only build host therefore resolves UnspecifiedPlatform and
+# exits before printing help, even though the CUDA image itself is valid.  Use
+# vLLM's CPU platform only for parser construction; the A100 runtime still
+# performs the independent GPU probe when --gpu is requested.
+platforms._current_platform = CpuPlatform()
+sys.argv = ["vllm", "serve", "--help=all"]
+from vllm.entrypoints.cli.main import main
+main()
+"""
+
 
 def container_probe(image: str, *, gpu: bool) -> list[str]:
     argv = ["docker", "run", "--rm"]
@@ -171,14 +187,18 @@ def main() -> int:
                 "run",
                 "--rm",
                 "--entrypoint",
-                "vllm",
+                "python3",
                 args.image,
-                "serve",
-                "--help",
+                "-c",
+                CLI_HELP_PROBE,
             ]
         )
         if help_result.returncode:
-            errors.append(f"vllm serve --help rc={help_result.returncode}")
+            tail = (help_result.stderr or help_result.stdout).strip().splitlines()[-8:]
+            errors.append(
+                "vllm serve --help "
+                f"rc={help_result.returncode}: {' | '.join(tail)}"
+            )
         else:
             errors.extend(required_cli_errors(help_result.stdout))
         if args.gpu:

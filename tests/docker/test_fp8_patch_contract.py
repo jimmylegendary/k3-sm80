@@ -60,7 +60,15 @@ class Fp8PatchContractTest(unittest.TestCase):
 
         self.assertIn("mla-fp8-kv-sm80.patch", dockerfile)
         self.assertIn("AS python-overlay", dockerfile)
-        self.assertIn("COPY --from=python-overlay /opt/venv /opt/venv", dockerfile)
+        self.assertNotIn("COPY --from=python-overlay /opt/venv /opt/venv", dockerfile)
+        self.assertIn(
+            "COPY --from=python-overlay /src/vllm/vllm/envs.py",
+            dockerfile,
+        )
+        self.assertIn(
+            "COPY --from=patched-build /tmp/k3-moe-install/vllm/",
+            dockerfile,
+        )
         self.assertIn("mla-fp8-kv-sm80-v1", dockerfile)
         self.assertIn("mla-fp8-kv-sm80-v1", verify)
         self.assertIn("VLLM_K3_SM80_FP8_KV", verify)

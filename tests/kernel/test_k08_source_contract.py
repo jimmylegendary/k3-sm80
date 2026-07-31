@@ -50,12 +50,15 @@ class K08SourceContractTest(unittest.TestCase):
         ):
             self.assertIn(token, harness)
 
-    def test_openai_image_rebuilds_the_patched_cuda_extension(self) -> None:
+    def test_openai_image_rebuilds_only_the_patched_cuda_extension(self) -> None:
         dockerfile = DOCKERFILE_PATH.read_text(encoding="utf-8")
 
         self.assertIn("mxfp4-marlin-moe-sm80.patch", dockerfile)
         self.assertIn("git apply --check", dockerfile)
-        self.assertIn("pip install . --no-build-isolation", dockerfile)
+        self.assertIn("--target _moe_C_stable_libtorch", dockerfile)
+        self.assertIn("--component _moe_C_stable_libtorch", dockerfile)
+        self.assertIn("_moe_C_stable_libtorch.abi3.so", dockerfile)
+        self.assertNotIn("pip install . --no-build-isolation", dockerfile)
         self.assertIn("TORCH_CUDA_ARCH_LIST=8.0", dockerfile)
         self.assertIn("cuda-nvrtc-dev-13-0", dockerfile)
         self.assertIn("sm80_kernel_bfloat16_fe2m1f_bfloat16.cu", dockerfile)

@@ -100,6 +100,16 @@ class OpenAIImageContractTest(unittest.TestCase):
             ["vllm serve --help missing flag: --headless"],
         )
 
+    def test_verify_cli_probe_is_cpu_host_safe(self) -> None:
+        module = load_verify_module()
+
+        self.assertIn("CpuPlatform", module.CLI_HELP_PROBE)
+        self.assertIn(
+            'sys.argv = ["vllm", "serve", "--help=all"]',
+            module.CLI_HELP_PROBE,
+        )
+        self.assertIn("main()", module.CLI_HELP_PROBE)
+
 
 if __name__ == "__main__":
     unittest.main()
