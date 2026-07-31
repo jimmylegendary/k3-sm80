@@ -61,24 +61,69 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     && printf '%s\n' "${VLLM_COMMIT}" \
        > /opt/k3-openai-build/VLLM_COMMIT.txt
 
+FROM patched-build AS python-overlay
+COPY docker/patches/mla-fp8-kv-sm80.patch \
+  /tmp/patches/mla-fp8-kv-sm80.patch
+RUN git apply --check /tmp/patches/mla-fp8-kv-sm80.patch \
+    && git apply /tmp/patches/mla-fp8-kv-sm80.patch \
+    && git diff --check \
+    && python3 -m py_compile \
+       vllm/envs.py \
+       vllm/model_executor/layers/attention/mla_attention.py \
+       vllm/models/kimi_k3/nvidia/mla.py \
+       vllm/models/kimi_k3/nvidia/ops/sm80_fp8_kv.py \
+       vllm/v1/attention/backends/mla/triton_mla.py \
+       vllm/v1/attention/ops/triton_decode_attention.py \
+    && python3 - <<'PY'
+import pathlib
+import shutil
+import vllm
+
+source_root = pathlib.Path("/src/vllm/vllm")
+installed_root = pathlib.Path(vllm.__file__).parent
+relative_paths = (
+    "envs.py",
+    "model_executor/layers/attention/mla_attention.py",
+    "models/kimi_k3/nvidia/mla.py",
+    "models/kimi_k3/nvidia/ops/sm80_fp8_kv.py",
+    "v1/attention/backends/mla/triton_mla.py",
+    "v1/attention/ops/triton_decode_attention.py",
+)
+for relative in relative_paths:
+    destination = installed_root / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_root / relative, destination)
+
+installed = (
+    installed_root / "models/kimi_k3/nvidia/ops/sm80_fp8_kv.py"
+).read_text()
+assert 'PATCH_ID = "mla-fp8-kv-sm80-v1"' in installed
+assert "native_fp8_arithmetic = False" in installed
+print("K3-SM80-FP8-OVERLAY PASS mode=cpu files=6")
+PY
+RUN sha256sum /tmp/patches/mla-fp8-kv-sm80.patch \
+       >> /opt/k3-openai-build/patches.sha256
+
 FROM ${BASE_IMAGE} AS runtime
 ARG VLLM_COMMIT
 ARG BASE_IMAGE
 ENV TORCH_CUDA_ARCH_LIST=8.0 \
     VLLM_COMMIT=${VLLM_COMMIT} \
-    K3_PATCHSET=kda-sm80-int64+mxfp4-marlin-moe-sm80-v2
+    K3_PATCHSET=kda-sm80-int64+mxfp4-marlin-moe-sm80-v2+mla-fp8-kv-sm80-v1
 
-COPY --from=patched-build /opt/venv /opt/venv
-COPY --from=patched-build /opt/k3-openai-build /opt/k3-openai-build
+COPY --from=python-overlay /opt/venv /opt/venv
+COPY --from=python-overlay /opt/k3-openai-build /opt/k3-openai-build
 COPY docker/patches/kda-sm80-int64.patch /opt/k3-patches/kda-sm80-int64.patch
 COPY docker/patches/mxfp4-marlin-moe-sm80.patch \
   /opt/k3-patches/mxfp4-marlin-moe-sm80.patch
+COPY docker/patches/mla-fp8-kv-sm80.patch \
+  /opt/k3-patches/mla-fp8-kv-sm80.patch
 
 LABEL org.opencontainers.image.source="https://github.com/jimmylegendary/k3-sm80" \
       org.opencontainers.image.revision="0498dc7ea9204f1863b46515816f5d8d458e01e7" \
       org.opencontainers.image.description="Kimi-K3 OpenAI serving runtime for 4-node x 8x A100" \
       io.k3.cuda_arch="sm80" \
-      io.k3.patchset="kda-sm80-int64+mxfp4-marlin-moe-sm80-v2" \
+      io.k3.patchset="kda-sm80-int64+mxfp4-marlin-moe-sm80-v2+mla-fp8-kv-sm80-v1" \
       io.k3.base_digest="sha256:d5fc27444ec6a9f52ac18a81acd88394f1840ce747c3eb989a5b4b0316079752"
 
 # CPU-safe contract: importing the API/parser modules and checking installed
@@ -101,16 +146,22 @@ for module in (
 root = pathlib.Path(vllm.__file__).parent
 chunk = (root / "models/kimi_k3/nvidia/ops/third_party/kda/chunk.py").read_text()
 delta = (root / "third_party/flash_linear_attention/ops/chunk_delta_h.py").read_text()
+fp8_kv = (root / "models/kimi_k3/nvidia/ops/sm80_fp8_kv.py").read_text()
+envs_source = (root / "envs.py").read_text()
 assert "(i_tg * H + i_h).to(tl.int64) * K * V" in chunk
 assert "(boh * H + i_h).to(tl.int64) * V * K" in delta
+assert 'PATCH_ID = "mla-fp8-kv-sm80-v1"' in fp8_kv
+assert "native_fp8_arithmetic = False" in fp8_kv
+assert "VLLM_K3_SM80_FP8_KV" in envs_source
 assert "sm_80" in torch.cuda.get_arch_list()
 assert pathlib.Path(
     "/opt/k3-patches/mxfp4-marlin-moe-sm80.patch"
 ).is_file()
+assert pathlib.Path("/opt/k3-patches/mla-fp8-kv-sm80.patch").is_file()
 assert hasattr(torch.ops._moe_C, "moe_wna16_marlin_gemm")
 print(
     "K3-OPENAI-CONTRACT PASS mode=cpu "
-    "patch=kda-sm80-int64+mxfp4-marlin-moe-sm80-v2"
+    "patch=kda-sm80-int64+mxfp4-marlin-moe-sm80-v2+mla-fp8-kv-sm80-v1"
 )
 PY
 

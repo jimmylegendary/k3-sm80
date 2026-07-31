@@ -14,7 +14,9 @@ BASE_DIGEST = "sha256:d5fc27444ec6a9f52ac18a81acd88394f1840ce747c3eb989a5b4b0316
 EXPECTED_LABELS = {
     "org.opencontainers.image.revision": COMMIT,
     "io.k3.cuda_arch": "sm80",
-    "io.k3.patchset": "kda-sm80-int64+mxfp4-marlin-moe-sm80-v2",
+    "io.k3.patchset": (
+        "kda-sm80-int64+mxfp4-marlin-moe-sm80-v2+mla-fp8-kv-sm80-v1"
+    ),
     "io.k3.base_digest": BASE_DIGEST,
 }
 
@@ -71,10 +73,16 @@ for module in (
 root = pathlib.Path(vllm.__file__).parent
 chunk = (root / "models/kimi_k3/nvidia/ops/third_party/kda/chunk.py").read_text()
 delta = (root / "third_party/flash_linear_attention/ops/chunk_delta_h.py").read_text()
+fp8_kv = (root / "models/kimi_k3/nvidia/ops/sm80_fp8_kv.py").read_text()
+envs_source = (root / "envs.py").read_text()
 assert "(i_tg * H + i_h).to(tl.int64) * K * V" in chunk
 assert "(boh * H + i_h).to(tl.int64) * V * K" in delta
+assert 'PATCH_ID = "mla-fp8-kv-sm80-v1"' in fp8_kv
+assert "native_fp8_arithmetic = False" in fp8_kv
+assert "VLLM_K3_SM80_FP8_KV" in envs_source
 assert "sm_80" in torch.cuda.get_arch_list()
 assert pathlib.Path("/opt/k3-patches/mxfp4-marlin-moe-sm80.patch").is_file()
+assert pathlib.Path("/opt/k3-patches/mla-fp8-kv-sm80.patch").is_file()
 assert hasattr(torch.ops._moe_C, "moe_wna16_marlin_gemm")
 print("CPU_CONTRACT_PASS")
 """

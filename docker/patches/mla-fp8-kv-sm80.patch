@@ -1,0 +1,583 @@
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 69a4cee..199f231 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -87,6 +87,7 @@ if TYPE_CHECKING:
+     VLLM_MAIN_CUDA_VERSION: str = "13.0"
+     VLLM_FLOAT32_MATMUL_PRECISION: Literal["highest", "high", "medium"] = "highest"
+     VLLM_BATCH_INVARIANT: bool = False
++    VLLM_K3_SM80_FP8_KV: bool = False
+     VLLM_TRITON_USE_TD: bool | None = None
+     # Deprecated alias of VLLM_TRITON_USE_TD (removed in v0.25).
+     VLLM_TRITON_ATTN_USE_TD: bool | None = None
+@@ -605,6 +606,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     # Enable batch-invariant mode: deterministic results regardless of
+     # batch composition. Requires NVIDIA GPU with compute capability >= 9.0.
+     "VLLM_BATCH_INVARIANT": lambda: bool(int(os.getenv("VLLM_BATCH_INVARIANT", "0"))),
++    "VLLM_K3_SM80_FP8_KV": lambda: bool(
++        int(os.getenv("VLLM_K3_SM80_FP8_KV", "0"))
++    ),
+     # Use tensor descriptors for Q/K/V loads and output stores in the
+     # Triton unified-attention kernel.  Enables HW 2D block reads on
+     # Intel XPU; the non-TD branch is dead-code-eliminated at Triton
+diff --git a/vllm/model_executor/layers/attention/mla_attention.py b/vllm/model_executor/layers/attention/mla_attention.py
+index 71c4def..55241d5 100644
+--- a/vllm/model_executor/layers/attention/mla_attention.py
++++ b/vllm/model_executor/layers/attention/mla_attention.py
+@@ -2273,6 +2273,23 @@ class MLACommonBaseImpl(MLAAttentionImpl[A], Generic[A]):
+                     batch_size=attn_metadata.num_prefills,
+                     seq_starts=prefill_metadata.chunked_context.starts[i],
+                 )
++            elif getattr(self, "k3_sm80_software_fp8", False):
++                # Kimi-K3-only SM80 path: keep the paged cache as raw E4M3FN
++                # bytes and decode to the existing BF16 context workspace.
++                from vllm.models.kimi_k3.nvidia.ops.sm80_fp8_kv import (
++                    software_gather_fp8_cache,
++                )
++
++                software_gather_fp8_cache(
++                    src_cache=kv_c_and_k_pe_cache,
++                    dst=workspace,
++                    block_table=prefill_metadata.block_table,
++                    cu_seq_lens=prefill_metadata.chunked_context.cu_seq_lens[i],
++                    token_to_seq=prefill_metadata.chunked_context.token_to_seq[i],
++                    num_tokens=prefill_metadata.chunked_context.chunk_total_token[i],
++                    scale=k_scale,
++                    seq_starts=prefill_metadata.chunked_context.starts[i],
++                )
+             elif not use_fp8_prefill:
+                 ops.gather_and_maybe_dequant_cache(
+                     src_cache=kv_c_and_k_pe_cache,
+diff --git a/vllm/models/kimi_k3/nvidia/mla.py b/vllm/models/kimi_k3/nvidia/mla.py
+index c6eee08..b3fc64b 100644
+--- a/vllm/models/kimi_k3/nvidia/mla.py
++++ b/vllm/models/kimi_k3/nvidia/mla.py
+@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, cast
+ import torch
+ from torch import nn
+ 
++import vllm.envs as envs
+ from vllm.compilation.breakable_cudagraph import eager_break_during_capture
+ from vllm.config import CacheConfig, VllmConfig, get_current_vllm_config
+ from vllm.distributed import get_tensor_model_parallel_world_size
+@@ -65,6 +66,11 @@ from vllm.models.kimi_k3.nvidia.ops.fused_mla_key_concat_kv_cache import (
+     fused_mla_key_concat_kv_cache_insert,
+     fused_mla_qkv_quant_kv_cache_fp8_insert,
+ )
++from vllm.models.kimi_k3.nvidia.ops.sm80_fp8_kv import (
++    CONVERSION_CONTRACT,
++    PATCH_ID,
++    software_fp8_cache_insert,
++)
+ from vllm.platforms import current_platform
+ from vllm.transformers_utils.configs.kimi_linear import KimiLinearConfig
+ from vllm.utils.multi_stream_utils import maybe_execute_in_parallel
+@@ -262,6 +268,26 @@ class MultiHeadLatentAttention(nn.Module, AttentionLayerBase):
+             self.kv_cache_dtype = cache_config.cache_dtype
+         else:
+             self.kv_cache_dtype = "auto"
++        self._k3_sm80_software_fp8 = bool(envs.VLLM_K3_SM80_FP8_KV)
++        if self._k3_sm80_software_fp8:
++            cap = current_platform.get_device_capability()
++            if self.kv_cache_dtype not in ("fp8", "fp8_e4m3"):
++                raise ValueError(
++                    "VLLM_K3_SM80_FP8_KV=1 requires --kv-cache-dtype fp8"
++                )
++            if not (
++                current_platform.is_cuda()
++                and current_platform.has_device_capability(80)
++                and cap is not None
++                and cap.to_int() == 80
++            ):
++                raise ValueError(
++                    "VLLM_K3_SM80_FP8_KV=1 is a Kimi-K3 SM80-only path"
++                )
++            if (self.kv_lora_rank, self.qk_rope_head_dim) != (512, 64):
++                raise ValueError(
++                    "Kimi-K3 SM80 software FP8 requires latent geometry 512+64"
++                )
+ 
+         dtype = torch.get_default_dtype()
+         self.attn_backend = get_attn_backend(
+@@ -300,7 +326,19 @@ class MultiHeadLatentAttention(nn.Module, AttentionLayerBase):
+             v_head_dim=self.v_head_dim,
+             kv_b_proj=self.kv_b_proj,
+             indexer=None,
++            k3_sm80_software_fp8=self._k3_sm80_software_fp8,
+         )
++        if self._k3_sm80_software_fp8:
++            if self.attn_backend.get_name() != "TRITON_MLA":
++                raise ValueError(
++                    "Kimi-K3 SM80 software FP8 requires TRITON_MLA"
++                )
++            logger.warning_once(
++                "Kimi-K3 KV backend=TRITON_MLA storage=uint8/e4m3fn "
++                "conversion=%s patch=%s native_fp8_arithmetic=False",
++                CONVERSION_CONTRACT,
++                PATCH_ID,
++            )
+         self.q_pad_num_heads = getattr(self.impl, "q_pad_num_heads", None)
+ 
+         vllm_config = get_current_vllm_config()
+@@ -410,6 +448,8 @@ class MultiHeadLatentAttention(nn.Module, AttentionLayerBase):
+         the fp8_ds_mla layout keeps its native uint8 view.
+         """
+         cache = self.kv_cache
++        if self._k3_sm80_software_fp8:
++            return cache if cache.dtype == torch.uint8 else cache.view(torch.uint8)
+         if (
+             is_quantized_kv_cache(self.kv_cache_dtype)
+             and self.kv_cache_dtype != "fp8_ds_mla"
+@@ -595,6 +635,23 @@ class MultiHeadLatentAttention(nn.Module, AttentionLayerBase):
+     ) -> torch.Tensor:
+         """Fused decode query-concat + latent cache insert, dispatched by cache
+         dtype (same policy as prefill: fp8 cache -> fp8 query)."""
++        if self._k3_sm80_software_fp8:
++            if positions is not None or cos_sin_cache is not None:
++                raise ValueError(
++                    "Kimi-K3 SM80 software FP8 currently supports NoPE only"
++                )
++            cache = self.kv_cache
++            if cache.dtype != torch.uint8:
++                cache = cache.view(torch.uint8)
++            software_fp8_cache_insert(
++                kv_c_normed,
++                k_pe,
++                cache,
++                slot_mapping,
++                self._k_scale_inv,
++            )
++            mqa_q = torch.cat((ql_nope, q_pe), dim=-1)
++            return mqa_q
+         if self.kv_cache_dtype == "fp8_ds_mla":
+             cache = self.kv_cache
+             if cache.dtype != torch.uint8:
+@@ -691,6 +748,28 @@ class MultiHeadLatentAttention(nn.Module, AttentionLayerBase):
+                 positions,
+                 cos_sin_cache,
+             )
++        elif self._k3_sm80_software_fp8:
++            if positions is not None or cos_sin_cache is not None:
++                raise ValueError(
++                    "Kimi-K3 SM80 software FP8 currently supports NoPE only"
++                )
++            assert not fp8_prefill, (
++                "Kimi-K3 SM80 software FP8 preserves BF16 prefill queries"
++            )
++            kv_cache = self.kv_cache
++            if kv_cache.dtype != torch.uint8:
++                kv_cache = kv_cache.view(torch.uint8)
++            software_fp8_cache_insert(
++                kv_c_normed,
++                k_pe,
++                kv_cache,
++                slot_mapping,
++                self._k_scale_inv,
++            )
++            k_pe_heads = k_pe.reshape(k_pe.shape[0], 1, -1).expand(
++                -1, self.num_local_heads, -1
++            )
++            k = torch.cat((k_nope, k_pe_heads), dim=-1)
+         elif is_quantized_kv_cache(self.kv_cache_dtype):
+             assert fp8_prefill, (
+                 "Kimi-K3 fp8 KV cache requires an fp8 prefill query; enable "
+diff --git a/vllm/models/kimi_k3/nvidia/ops/sm80_fp8_kv.py b/vllm/models/kimi_k3/nvidia/ops/sm80_fp8_kv.py
+new file mode 100644
+index 0000000..9c70911
+--- /dev/null
++++ b/vllm/models/kimi_k3/nvidia/ops/sm80_fp8_kv.py
+@@ -0,0 +1,242 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Kimi-K3 SM80 software E4M3FN cache conversion.
++
++Storage is one uint8 E4M3FN code per latent element.  All attention queries,
++dot products, accumulation, and outputs remain BF16/FP32.  In particular this
++module never asks Triton or CUDA to materialize a native FP8 tensor.
++"""
++
++import torch
++
++from vllm.triton_utils import tl, triton
++
++
++PATCH_ID = "mla-fp8-kv-sm80-v1"
++CONVERSION_CONTRACT = "uint8/e4m3fn -> software decode -> bfloat16"
++# Machine-readable startup/verification token.
++native_fp8_arithmetic = False
++
++
++@triton.jit
++def _round_positive_rne(value):
++    lower = tl.floor(value)
++    fraction = value - lower
++    lower_i = lower.to(tl.int32)
++    round_up = (fraction > 0.5) | (
++        (fraction == 0.5) & ((lower_i & 1) != 0)
++    )
++    return lower_i + round_up.to(tl.int32)
++
++
++@triton.jit
++def e4m3_bits_to_fp32(bits):
++    bits_i = bits.to(tl.int32)
++    sign = (bits_i >> 7) & 1
++    exponent = (bits_i >> 3) & 0xF
++    mantissa = bits_i & 0x7
++    subnormal = mantissa.to(tl.float32) * (2.0**-9)
++    normal = (1.0 + mantissa.to(tl.float32) / 8.0) * tl.exp2(
++        exponent.to(tl.float32) - 7.0
++    )
++    value = tl.where(exponent == 0, subnormal, normal)
++    value = tl.where(sign == 0, value, -value)
++    return tl.where(
++        (exponent == 0xF) & (mantissa == 0x7), float("nan"), value
++    )
++
++
++@triton.jit
++def _fp32_to_e4m3_bits(value):
++    is_nan = value != value
++    is_negative = (value < 0.0) | (
++        (value == 0.0) & ((1.0 / value) < 0.0)
++    )
++    magnitude = tl.abs(value)
++    sub_q = _round_positive_rne(magnitude * 512.0)
++    safe_magnitude = tl.maximum(magnitude, 2.0**-6)
++    exponent = tl.floor(tl.log2(safe_magnitude)).to(tl.int32)
++    exponent = tl.maximum(-6, tl.minimum(8, exponent))
++    step = tl.exp2(exponent.to(tl.float32) - 3.0)
++    normal_q = _round_positive_rne(magnitude / step)
++    carry = normal_q >= 16
++    exponent += carry.to(tl.int32)
++    normal_q = tl.where(carry, 8, normal_q)
++    normal_code = ((exponent + 7) << 3) + (normal_q - 8)
++    positive = tl.where(magnitude < 2.0**-6, sub_q, normal_code)
++    positive = tl.minimum(positive, 0x7E)
++    positive = tl.where(magnitude >= 448.0, 0x7E, positive)
++    signed = positive | (is_negative.to(tl.int32) << 7)
++    return tl.where(is_nan, 0x7F, signed)
++
++
++@triton.jit
++def _software_fp8_cache_insert_kernel(
++    kv_c,
++    k_pe,
++    cache,
++    slot_mapping,
++    cache_scale_inv,
++    n_tokens,
++    cache_block_stride,
++    cache_token_stride,
++    kv_lora_rank: tl.constexpr,
++    rope_dim: tl.constexpr,
++    cache_block_size: tl.constexpr,
++    block_size: tl.constexpr,
++):
++    entry_size: tl.constexpr = kv_lora_rank + rope_dim
++    offsets = tl.program_id(0) * block_size + tl.arange(0, block_size)
++    total = n_tokens * entry_size
++    in_range = offsets < total
++    token = offsets // entry_size
++    channel = offsets - token * entry_size
++    safe_token = tl.where(token < n_tokens, token, 0)
++    slot = tl.load(slot_mapping + safe_token, mask=in_range, other=-1)
++    valid = in_range & (slot >= 0)
++    kv_offset = safe_token * kv_lora_rank + channel
++    pe_offset = safe_token * rope_dim + (channel - kv_lora_rank)
++    value = tl.where(
++        channel < kv_lora_rank,
++        tl.load(kv_c + kv_offset, mask=valid & (channel < kv_lora_rank), other=0.0),
++        tl.load(k_pe + pe_offset, mask=valid & (channel >= kv_lora_rank), other=0.0),
++    ).to(tl.float32)
++    scale_inv = tl.load(cache_scale_inv)
++    bits = _fp32_to_e4m3_bits(value * scale_inv)
++    cache_block = slot // cache_block_size
++    cache_token = slot - cache_block * cache_block_size
++    cache_offset = (
++        cache_block * cache_block_stride
++        + cache_token * cache_token_stride
++        + channel
++    )
++    tl.store(cache + cache_offset, bits.to(tl.uint8), mask=valid)
++
++
++def software_fp8_cache_insert(
++    kv_c_normed: torch.Tensor,
++    k_pe: torch.Tensor,
++    cache: torch.Tensor,
++    slot_mapping: torch.Tensor,
++    cache_scale_inv: torch.Tensor,
++) -> None:
++    """Insert K3 latent rows into a uint8 paged cache using software RNE."""
++    if cache.dtype != torch.uint8:
++        raise TypeError(f"software FP8 cache must be uint8, got {cache.dtype}")
++    if kv_c_normed.dtype not in (torch.bfloat16, torch.float16):
++        raise TypeError(f"software FP8 source must be BF16/FP16, got {kv_c_normed.dtype}")
++    if not (kv_c_normed.is_cuda and k_pe.is_cuda and cache.is_cuda):
++        raise ValueError("software FP8 cache conversion requires CUDA tensors")
++    k_pe = k_pe.reshape(k_pe.shape[0], -1).contiguous()
++    kv_c_normed = kv_c_normed.contiguous()
++    n_tokens, kv_lora_rank = kv_c_normed.shape
++    rope_dim = k_pe.shape[1]
++    if cache.shape[-1] != kv_lora_rank + rope_dim:
++        raise ValueError(
++            f"cache entry {cache.shape[-1]} != {kv_lora_rank}+{rope_dim}"
++        )
++    total = n_tokens * (kv_lora_rank + rope_dim)
++    launch_block = 256
++    _software_fp8_cache_insert_kernel[(triton.cdiv(total, launch_block),)](
++        kv_c_normed,
++        k_pe,
++        cache,
++        slot_mapping,
++        cache_scale_inv,
++        n_tokens=n_tokens,
++        cache_block_stride=cache.stride(0),
++        cache_token_stride=cache.stride(1),
++        kv_lora_rank=kv_lora_rank,
++        rope_dim=rope_dim,
++        cache_block_size=cache.shape[1],
++        block_size=launch_block,
++        num_warps=4,
++    )
++
++
++@triton.jit
++def _software_gather_fp8_cache_kernel(
++    src_cache,
++    dst,
++    block_table,
++    cu_seq_lens,
++    token_to_seq,
++    seq_starts,
++    scale,
++    num_tokens,
++    cache_block_size: tl.constexpr,
++    entry_size: tl.constexpr,
++    block_table_stride: tl.constexpr,
++    cache_block_stride: tl.constexpr,
++    cache_token_stride: tl.constexpr,
++    has_seq_starts: tl.constexpr,
++    launch_block: tl.constexpr,
++):
++    offsets = tl.program_id(0) * launch_block + tl.arange(0, launch_block)
++    total = num_tokens * entry_size
++    in_range = offsets < total
++    token = offsets // entry_size
++    channel = offsets - token * entry_size
++    safe_token = tl.where(token < num_tokens, token, 0)
++    sequence = tl.load(token_to_seq + safe_token, mask=in_range, other=0)
++    sequence_start = tl.load(cu_seq_lens + sequence, mask=in_range, other=0)
++    sequence_offset = safe_token - sequence_start
++    if has_seq_starts:
++        sequence_offset += tl.load(
++            seq_starts + sequence, mask=in_range, other=0
++        )
++    logical_page = sequence_offset // cache_block_size
++    page_offset = sequence_offset - logical_page * cache_block_size
++    physical_page = tl.load(
++        block_table + sequence * block_table_stride + logical_page,
++        mask=in_range,
++        other=0,
++    )
++    physical_offset = (
++        physical_page * cache_block_stride
++        + page_offset * cache_token_stride
++        + channel
++    )
++    bits = tl.load(src_cache + physical_offset, mask=in_range, other=0).to(tl.uint8)
++    value = e4m3_bits_to_fp32(bits) * tl.load(scale)
++    tl.store(dst + offsets, value.to(tl.bfloat16), mask=in_range)
++
++
++def software_gather_fp8_cache(
++    *,
++    src_cache: torch.Tensor,
++    dst: torch.Tensor,
++    block_table: torch.Tensor,
++    cu_seq_lens: torch.Tensor,
++    token_to_seq: torch.Tensor,
++    num_tokens: int,
++    scale: torch.Tensor,
++    seq_starts: torch.Tensor | None = None,
++) -> None:
++    """Gather/dequant K3 context rows into the existing BF16 workspace."""
++    if src_cache.dtype != torch.uint8:
++        raise TypeError(f"software FP8 source cache must be uint8, got {src_cache.dtype}")
++    if dst.dtype != torch.bfloat16:
++        raise TypeError(f"software FP8 gather destination must be BF16, got {dst.dtype}")
++    if src_cache.shape[-1] != 576 or dst.shape[-1] != 576:
++        raise ValueError("Kimi-K3 software FP8 gather requires 576-element cache rows")
++    launch_block = 256
++    total = int(num_tokens) * 576
++    starts = seq_starts if seq_starts is not None else cu_seq_lens
++    _software_gather_fp8_cache_kernel[(triton.cdiv(total, launch_block),)](
++        src_cache,
++        dst,
++        block_table,
++        cu_seq_lens,
++        token_to_seq,
++        starts,
++        scale,
++        num_tokens=int(num_tokens),
++        cache_block_size=src_cache.shape[1],
++        entry_size=576,
++        block_table_stride=block_table.stride(0),
++        cache_block_stride=src_cache.stride(0),
++        cache_token_stride=src_cache.stride(1),
++        has_seq_starts=seq_starts is not None,
++        launch_block=launch_block,
++        num_warps=4,
++    )
+diff --git a/vllm/v1/attention/backends/mla/triton_mla.py b/vllm/v1/attention/backends/mla/triton_mla.py
+index 71a38e9..df2ead8 100644
+--- a/vllm/v1/attention/backends/mla/triton_mla.py
++++ b/vllm/v1/attention/backends/mla/triton_mla.py
+@@ -170,6 +170,9 @@ class TritonMLAImpl(MLACommonImpl[MLACommonMetadata]):
+         # MLA Specific Arguments
+         **mla_args,
+     ) -> None:
++        self.k3_sm80_software_fp8 = bool(
++            mla_args.pop("k3_sm80_software_fp8", False)
++        )
+         super().__init__(
+             num_heads,
+             head_size,
+@@ -203,8 +206,15 @@ class TritonMLAImpl(MLACommonImpl[MLACommonMetadata]):
+             cap = current_platform.get_device_capability()
+             cap_str = cap.as_version_str() if cap is not None else "unknown"
+             dev = current_platform.get_device_name()
++            software_fp8_valid = (
++                self.k3_sm80_software_fp8
++                and self.kv_cache_dtype in ("fp8", "fp8_e4m3")
++                and current_platform.has_device_capability(80)
++                and cap is not None
++                and cap.to_int() == 80
++            )
+             if self.kv_cache_dtype.startswith("fp8") and not (
+-                current_platform.has_device_capability(89)
++                current_platform.has_device_capability(89) or software_fp8_valid
+             ):
+                 suggested = (
+                     "float16" if (cap is None or cap.to_int() < 80) else "bfloat16"
+@@ -312,6 +322,7 @@ class TritonMLAImpl(MLACommonImpl[MLACommonMetadata]):
+             k_scale=layer._k_scale,
+             v_scale=layer._k_scale,
+             is_mla=True,
++            software_fp8=self.k3_sm80_software_fp8,
+         )
+ 
+         return o, lse
+diff --git a/vllm/v1/attention/ops/triton_decode_attention.py b/vllm/v1/attention/ops/triton_decode_attention.py
+index 6aec1db..5e30569 100644
+--- a/vllm/v1/attention/ops/triton_decode_attention.py
++++ b/vllm/v1/attention/ops/triton_decode_attention.py
+@@ -56,6 +56,23 @@ def tanh(x):
+     return 2 * tl.sigmoid(2 * x) - 1
+ 
+ 
++@triton.jit
++def _software_e4m3_bits_to_fp32(bits):
++    bits_i = bits.to(tl.int32)
++    sign = (bits_i >> 7) & 1
++    exponent = (bits_i >> 3) & 0xF
++    mantissa = bits_i & 0x7
++    subnormal = mantissa.to(tl.float32) * (2.0**-9)
++    normal = (1.0 + mantissa.to(tl.float32) / 8.0) * tl.exp2(
++        exponent.to(tl.float32) - 7.0
++    )
++    value = tl.where(exponent == 0, subnormal, normal)
++    value = tl.where(sign == 0, value, -value)
++    return tl.where(
++        (exponent == 0xF) & (mantissa == 0x7), float("nan"), value
++    )
++
++
+ def _page_stride(buf, page_size):
+     # Stride between pages. 4D buffers have a page dim; 3D buffers pack pages
+     # along the token dim, so split it out first. Read the real stride (a
+@@ -311,6 +328,7 @@ def _fwd_grouped_kernel_stage1(
+     Lk: tl.constexpr,
+     Lv: tl.constexpr,
+     IS_MLA: tl.constexpr = False,
++    SOFTWARE_FP8: tl.constexpr = False,
+ ):
+     cur_batch = tl.program_id(0)
+     cur_head_id = tl.program_id(1)
+@@ -389,7 +407,9 @@ def _fwd_grouped_kernel_stage1(
+                 cache_modifier=".cg",
+             )
+ 
+-            if k.dtype.is_fp8():
++            if SOFTWARE_FP8:
++                k = (_software_e4m3_bits_to_fp32(k) * ks).to(q.dtype)
++            elif k.dtype.is_fp8():
+                 k = (k.to(tl.float32) * ks).to(q.dtype)
+             qk = tl.dot(q, k.to(q.dtype))
+             if BLOCK_DPE > 0:
+@@ -400,7 +420,9 @@ def _fwd_grouped_kernel_stage1(
+                     other=0.0,
+                     cache_modifier=".cg",
+                 )
+-                if kpe.dtype.is_fp8():
++                if SOFTWARE_FP8:
++                    kpe = (_software_e4m3_bits_to_fp32(kpe) * ks).to(qpe.dtype)
++                elif kpe.dtype.is_fp8():
+                     kpe = (kpe.to(tl.float32) * ks).to(qpe.dtype)
+                 qk += tl.dot(qpe, kpe.to(qpe.dtype))
+             qk *= sm_scale
+@@ -481,6 +503,7 @@ def _decode_grouped_att_m_fwd(
+     k_scale,
+     v_scale,
+     is_mla=False,
++    software_fp8=False,
+ ):
+     # with is_mla there is only a single c_kv in smem.
+     # could increase BLOCK or num_stages.
+@@ -568,6 +591,7 @@ def _decode_grouped_att_m_fwd(
+         Lk=Lk,
+         Lv=Lv,
+         IS_MLA=is_mla,
++        SOFTWARE_FP8=software_fp8,
+         **extra_kargs,
+     )
+ 
+@@ -732,6 +756,7 @@ def decode_attention_fwd_grouped(
+     k_scale=None,
+     v_scale=None,
+     is_mla=False,
++    software_fp8=False,
+ ):
+     _decode_grouped_att_m_fwd(
+         q,
+@@ -747,6 +772,7 @@ def decode_attention_fwd_grouped(
+         k_scale,
+         v_scale,
+         is_mla=is_mla,
++        software_fp8=software_fp8,
+     )
+     _decode_softmax_reducev_fwd(
+         attn_logits, q, o, lse, v_buffer, b_seq_len, num_kv_splits
+@@ -769,6 +795,7 @@ def decode_attention_fwd(
+     k_scale=None,
+     v_scale=None,
+     is_mla=False,
++    software_fp8=False,
+ ):
+     assert num_kv_splits == attn_logits.shape[2]
+ 
+@@ -780,6 +807,8 @@ def decode_attention_fwd(
+     kv_group_num = q.shape[1] // v_buffer.shape[-2]
+ 
+     if kv_group_num == 1:
++        if software_fp8:
++            raise ValueError("software_fp8 is implemented only for grouped MLA")
+         # MHA
+         decode_attention_fwd_normal(
+             q,
+@@ -815,4 +844,5 @@ def decode_attention_fwd(
+             k_scale,
+             v_scale,
+             is_mla=is_mla,
++            software_fp8=software_fp8,
+         )
