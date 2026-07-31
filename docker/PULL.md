@@ -56,6 +56,40 @@ cat k3-sm80-kernelkit-full-*.tar.zst.part-* | unzstd | docker load
 받고, 결합 전 `ls *.part-*` 목록이 `.sha256` 파일에 나열된 목록과 정확히 일치하는지 확인할 것.
 (push.sh 는 릴리스당 tier 1세트 불변식을 강제하지만, 로컬 잔재까지는 막지 못한다.)
 
+### 2.1 Kimi-K3 OpenAI serving image v3
+
+5개 serving lane은 kernel-kit `:full`이 아니라
+`k3-sm80-openai:0498dc7e-sm80-v3`를 사용한다. GHCR이 막힌 환경에서는 빈 NFS
+디렉터리에 GitHub Release asset을 한 번 받은 뒤, 네 노드의 로컬 Docker daemon에
+각각 load한다.
+
+```bash
+TAG=openai-0498dc7e-sm80-v3
+mkdir -p /mnt/nas/home/ubuntu/service/large_model/Kimi-K3/images/openai-v3
+cd /mnt/nas/home/ubuntu/service/large_model/Kimi-K3/images/openai-v3
+gh release download "$TAG" -R jimmylegendary/k3-sm80 \
+  -p 'k3-sm80-openai-0498dc7e-sm80-v3.tar.zst.part-*' \
+  -p SHA256SUMS \
+  -p image-inspect.json
+sha256sum -c SHA256SUMS
+cat k3-sm80-openai-0498dc7e-sm80-v3.tar.zst.part-* | zstd -d | docker load
+docker image inspect k3-sm80-openai:0498dc7e-sm80-v3 --format '{{.Id}} {{index .Config.Labels "io.k3.patchset"}}'
+```
+
+같은 `cat ... | zstd -d | docker load`를 worker1–3에서도 실행한다. 디렉터리가 NFS라
+part 파일을 다시 받을 필요는 없다. 네 노드의 image ID가 같아야 하며, 각 lane의
+`make preflight`가 이를 다시 검증한다.
+
+개발 호스트에서 image를 다시 publish할 때는 다음을 사용한다.
+
+```bash
+K3_OPENAI_GITHUB_UPLOAD=1 bash docker/release-openai.sh
+```
+
+이 명령은 1900MB part, `SHA256SUMS`, `image-inspect.json`을
+`openai-0498dc7e-sm80-v3` Release에 생성/갱신한다. Release 업로드는 image의 CPU
+contract만 의미하며 A100 kernel/service PASS를 의미하지 않는다.
+
 ## 3. 실행 (repo = /work 볼륨 마운트)
 
 ```bash
