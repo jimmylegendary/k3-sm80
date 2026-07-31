@@ -84,6 +84,7 @@ def _lane_values(spec: LaneSpec) -> dict[str, str]:
         "VLLM_TENSOR_PARALLEL_SIZE": str(spec.tp),
         "VLLM_PIPELINE_PARALLEL_SIZE": str(spec.pp),
         "VLLM_DATA_PARALLEL_SIZE": str(spec.dp),
+        "VLLM_DATA_PARALLEL_BACKEND": "mp",
         "VLLM_ENABLE_EXPERT_PARALLEL": "1" if spec.ep else "0",
         "VLLM_ALL2ALL_BACKEND": "allgather_reducescatter",
         "VLLM_MOE_BACKEND": "marlin",

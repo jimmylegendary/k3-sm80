@@ -17,7 +17,8 @@ software FP8 KV=1다. 필수 최종 gate는 `k08 c01 k09 ep 1m`다.
 | worker3 | 3 | 0–7 | native MP worker |
 
 world size는 TP8 × PP1 × DP4 = 32다. Ray를 쓰지 않고
-`--distributed-executor-backend mp --nnodes 4`를 사용한다.
+`--distributed-executor-backend mp --data-parallel-backend mp --nnodes 4`를
+명시하여 실행기와 DP 제어면을 모두 native MP로 고정한다.
 
 ## 3. 단일 `.env`
 

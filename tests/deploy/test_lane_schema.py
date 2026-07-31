@@ -103,6 +103,7 @@ class LaneEnvParsingTest(unittest.TestCase):
                 "K3_WORKER3_SSH_HOST",
                 "VLLM_TENSOR_PARALLEL_SIZE",
                 "VLLM_DATA_PARALLEL_SIZE",
+                "VLLM_DATA_PARALLEL_BACKEND",
                 "VLLM_ENABLE_EXPERT_PARALLEL",
                 "VLLM_MAX_MODEL_LEN",
                 "VLLM_MAX_NUM_SEQS",

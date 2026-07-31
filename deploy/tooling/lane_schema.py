@@ -46,6 +46,7 @@ VLLM_KEYS = frozenset(
         "VLLM_TENSOR_PARALLEL_SIZE",
         "VLLM_PIPELINE_PARALLEL_SIZE",
         "VLLM_DATA_PARALLEL_SIZE",
+        "VLLM_DATA_PARALLEL_BACKEND",
         "VLLM_ENABLE_EXPERT_PARALLEL",
         "VLLM_ALL2ALL_BACKEND",
         "VLLM_MOE_BACKEND",
@@ -208,6 +209,7 @@ class LaneEnv:
                 errors.append("TP*PP*DP must equal 32")
 
         expected_pairs = {
+            "VLLM_DATA_PARALLEL_BACKEND": "mp",
             "VLLM_ENABLE_EXPERT_PARALLEL": "1" if spec.ep else "0",
             "VLLM_MAX_MODEL_LEN": str(spec.max_len),
             "VLLM_KV_CACHE_DTYPE": "fp8" if spec.fp8_kv else "bfloat16",

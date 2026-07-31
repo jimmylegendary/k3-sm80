@@ -25,6 +25,7 @@ def serve_args(node_rank: int) -> list[str]:
         "--host", value("K3_API_BIND"),
         "--port", value("VLLM_API_PORT"),
         "--distributed-executor-backend", "mp",
+        "--data-parallel-backend", value("VLLM_DATA_PARALLEL_BACKEND"),
         "--nnodes", "4",
         "--node-rank", str(node_rank),
         "--master-addr", value("K3_HEAD_NODE_IP"),
