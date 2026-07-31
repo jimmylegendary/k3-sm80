@@ -1,0 +1,95 @@
+diff --git a/csrc/libtorch_stable/moe/marlin_moe_wna16/generate_kernels.py b/csrc/libtorch_stable/moe/marlin_moe_wna16/generate_kernels.py
+index 64b47b607..e00e588ea 100644
+--- a/csrc/libtorch_stable/moe/marlin_moe_wna16/generate_kernels.py
++++ b/csrc/libtorch_stable/moe/marlin_moe_wna16/generate_kernels.py
+@@ -310,6 +310,30 @@ def generate_new_kernels():
+         f.write(kernel_selector_str)
+ 
+ 
++def assert_sm80_mxfp4_kernel_generated():
++    """Fail the build if the original-checkpoint MXFP4 MoE image is absent."""
++    if not SUPPORT_SM80:
++        return
++
++    # Kimi K3's fused_marlin_moe fallback on sm_80 is BF16 x
++    # MXFP4(kFE2M1f + kFE8M0fnu), not a W4A16 re-quantized checkpoint.
++    expected_name = "sm80_kernel_bfloat16_fe2m1f_bfloat16.cu"
++    expected_path = os.path.join(os.path.dirname(__file__), expected_name)
++    if not os.path.isfile(expected_path):
++        raise RuntimeError(
++            "sm_80 MXFP4 Marlin MoE kernel was not generated: "
++            f"{expected_name}"
++        )
++    generated = open(expected_path, encoding="utf-8").read()
++    for scalar_type in ("kFE2M1f", "kFE8M0fnu"):
++        if scalar_type not in generated:
++            raise RuntimeError(
++                f"sm_80 MXFP4 Marlin MoE kernel lacks {scalar_type}: "
++                f"{expected_name}"
++            )
++
++
+ if __name__ == "__main__":
+     remove_old_kernels()
+     generate_new_kernels()
++    assert_sm80_mxfp4_kernel_generated()
+diff --git a/csrc/libtorch_stable/moe/marlin_moe_wna16/ops.cu b/csrc/libtorch_stable/moe/marlin_moe_wna16/ops.cu
+index 177eefa2c..a3f18e8d0 100644
+--- a/csrc/libtorch_stable/moe/marlin_moe_wna16/ops.cu
++++ b/csrc/libtorch_stable/moe/marlin_moe_wna16/ops.cu
+@@ -433,10 +433,10 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
+     if (is_k_full) has_act_order = false;
+   }
+ 
+-  int max_shared_mem = 0;
+-  cudaDeviceGetAttribute(&max_shared_mem,
++  int device_max_shared_mem = 0;
++  cudaDeviceGetAttribute(&device_max_shared_mem,
+                          cudaDevAttrMaxSharedMemoryPerBlockOptin, dev);
+-  STD_TORCH_CHECK(max_shared_mem > 0);
++  STD_TORCH_CHECK(device_max_shared_mem > 0);
+ 
+   int major_capability, minor_capability;
+   cudaDeviceGetAttribute(&major_capability, cudaDevAttrComputeCapabilityMajor,
+@@ -478,7 +478,7 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
+         a_type, b_type, c_type, s_type, prob_m, prob_n, prob_k, num_experts,
+         top_k, thread_m_blocks, m_block_size_8, num_bits, group_size,
+         has_act_order, is_k_full, has_zp, is_zp_float, is_a_8bit, stages,
+-        max_shared_mem, sms);
++        device_max_shared_mem, sms);
+     thread_tfg = exec_cfg.tb_cfg;
+   }
+ 
+@@ -486,6 +486,7 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
+   thread_k = thread_tfg.thread_k;
+   thread_n = thread_tfg.thread_n;
+   int blocks = sms * exec_cfg.blocks_per_sm;
++  int max_shared_mem = device_max_shared_mem;
+   if (exec_cfg.blocks_per_sm > 1)
+     max_shared_mem = max_shared_mem / exec_cfg.blocks_per_sm - 1024;
+ 
+@@ -527,10 +528,10 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
+   }
+ 
+   cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+-                       max_shared_mem);
++                       device_max_shared_mem);
+   // avoid ">>>" being formatted to "> > >"
+   // clang-format off
+-  kernel<<<blocks, num_threads, max_shared_mem, stream>>>(
++  kernel<<<blocks, num_threads, sh_cache_size, stream>>>(
+       A_ptr, B_ptr, C_ptr, C_tmp_ptr, bias_ptr, a_s_ptr, b_s_ptr, g_s_ptr, zp_ptr, g_idx_ptr,
+       sorted_token_ids_ptr, expert_ids_ptr, num_tokens_past_padded_ptr,
+       topk_weights_ptr, top_k, mul_topk_weights, num_groups, prob_m,
+@@ -708,9 +709,8 @@ torch::stable::Tensor moe_wna16_marlin_gemm(
+   torch::stable::Tensor c_tmp;
+   if (use_fp32_reduce && !use_atomic_add) {
+     // max num of threadblocks is sms * 4
+-    long max_c_tmp_size = min(
+-        (long)size_n * sorted_token_ids.size(0),
+-        (long)sms * 4 * moe_block_size * MARLIN_NAMESPACE_NAME::max_thread_n);
++    long max_c_tmp_size =
++        (long)sms * 4 * moe_block_size * MARLIN_NAMESPACE_NAME::max_thread_n;
+     if (moe_block_size == 8) max_c_tmp_size *= 2;
+     c_tmp = torch::stable::new_empty(a, {max_c_tmp_size}, kFloat);
+   } else {

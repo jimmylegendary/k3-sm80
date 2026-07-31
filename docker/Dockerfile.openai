@@ -1,48 +1,84 @@
 # syntax=docker/dockerfile:1
 #
-# Fast, immutable serving layer over the already SM80-compiled Kimi-K3 vLLM
-# image. KDA is Triton JIT source, so replacing the two installed Python source
-# files is the real runtime patch; the base image's C/CUDA extensions remain the
-# pinned TORCH_CUDA_ARCH_LIST=8.0 build.
+# Immutable serving layer over the pinned Kimi-K3 vLLM image.
+#
+# The KDA fix changes Triton JIT source.  The MXFP4 Marlin MoE fix changes
+# csrc/libtorch_stable/moe, so this Dockerfile deliberately rebuilds vLLM and
+# copies the rebuilt /opt/venv into the final image.  Merely copying Python
+# files would leave the old _moe_C CUDA extension installed.
 
 ARG BASE_IMAGE=ghcr.io/jimmylegendary/k3-sm80-kernelkit@sha256:d5fc27444ec6a9f52ac18a81acd88394f1840ce747c3eb989a5b4b0316079752
 ARG VLLM_COMMIT=0498dc7ea9204f1863b46515816f5d8d458e01e7
 
-FROM ${BASE_IMAGE} AS patched-source
+FROM ${BASE_IMAGE} AS patched-build
 ARG VLLM_COMMIT
-ENV TORCH_CUDA_ARCH_LIST=8.0
+ARG MAX_JOBS=8
+ARG NVCC_THREADS=2
+ENV TORCH_CUDA_ARCH_LIST=8.0 \
+    MAX_JOBS=${MAX_JOBS} \
+    NVCC_THREADS=${NVCC_THREADS} \
+    CCACHE_DIR=/root/.cache/ccache
+
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential ccache cuda-nvrtc-dev-13-0 \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/vllm
 RUN git clone --filter=blob:none https://github.com/vllm-project/vllm.git . \
     && git fetch origin pull/50000/head:kimi-k3-pr \
     && git checkout --detach "${VLLM_COMMIT}" \
     && test "$(git rev-parse HEAD)" = "${VLLM_COMMIT}"
 COPY docker/patches/kda-sm80-int64.patch /tmp/patches/kda-sm80-int64.patch
+COPY docker/patches/mxfp4-marlin-moe-sm80.patch /tmp/patches/mxfp4-marlin-moe-sm80.patch
 RUN git apply --check /tmp/patches/kda-sm80-int64.patch \
     && git apply /tmp/patches/kda-sm80-int64.patch \
+    && git apply --check /tmp/patches/mxfp4-marlin-moe-sm80.patch \
+    && git apply /tmp/patches/mxfp4-marlin-moe-sm80.patch \
     && git diff --check \
     && grep -Fq '(i_tg * H + i_h).to(tl.int64) * K * V' \
-       vllm/models/kimi_k3/nvidia/ops/third_party/kda/chunk.py
+       vllm/models/kimi_k3/nvidia/ops/third_party/kda/chunk.py \
+    && grep -Fq 'device_max_shared_mem' \
+       csrc/libtorch_stable/moe/marlin_moe_wna16/ops.cu \
+    && grep -Fq 'kernel<<<blocks, num_threads, sh_cache_size, stream>>>' \
+       csrc/libtorch_stable/moe/marlin_moe_wna16/ops.cu
+
+# Rebuild the pinned Python package and _moe_C extension.  --no-deps preserves
+# the already pinned CUDA/PyTorch dependency set from BASE_IMAGE.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/root/.cache/ccache \
+    pip install . --no-build-isolation --no-deps --force-reinstall \
+        2>&1 | tee /tmp/build-k3-openai.log \
+    && test -s \
+       csrc/libtorch_stable/moe/marlin_moe_wna16/sm80_kernel_bfloat16_fe2m1f_bfloat16.cu \
+    && grep -Fq kFE8M0fnu \
+       csrc/libtorch_stable/moe/marlin_moe_wna16/sm80_kernel_bfloat16_fe2m1f_bfloat16.cu \
+    && mkdir -p /opt/k3-openai-build \
+    && gzip -9 -c /tmp/build-k3-openai.log \
+       > /opt/k3-openai-build/build.log.gz \
+    && sha256sum /tmp/patches/*.patch \
+       > /opt/k3-openai-build/patches.sha256 \
+    && printf '%s\n' "${VLLM_COMMIT}" \
+       > /opt/k3-openai-build/VLLM_COMMIT.txt
 
 FROM ${BASE_IMAGE} AS runtime
 ARG VLLM_COMMIT
 ARG BASE_IMAGE
 ENV TORCH_CUDA_ARCH_LIST=8.0 \
     VLLM_COMMIT=${VLLM_COMMIT} \
-    K3_PATCHSET=kda-sm80-int64-v1
+    K3_PATCHSET=kda-sm80-int64+mxfp4-marlin-moe-sm80-v2
 
-COPY --from=patched-source \
-  /src/vllm/vllm/models/kimi_k3/nvidia/ops/third_party/kda/chunk.py \
-  /opt/venv/lib/python3.12/site-packages/vllm/models/kimi_k3/nvidia/ops/third_party/kda/chunk.py
-COPY --from=patched-source \
-  /src/vllm/vllm/third_party/flash_linear_attention/ops/chunk_delta_h.py \
-  /opt/venv/lib/python3.12/site-packages/vllm/third_party/flash_linear_attention/ops/chunk_delta_h.py
+COPY --from=patched-build /opt/venv /opt/venv
+COPY --from=patched-build /opt/k3-openai-build /opt/k3-openai-build
 COPY docker/patches/kda-sm80-int64.patch /opt/k3-patches/kda-sm80-int64.patch
+COPY docker/patches/mxfp4-marlin-moe-sm80.patch \
+  /opt/k3-patches/mxfp4-marlin-moe-sm80.patch
 
 LABEL org.opencontainers.image.source="https://github.com/jimmylegendary/k3-sm80" \
       org.opencontainers.image.revision="0498dc7ea9204f1863b46515816f5d8d458e01e7" \
       org.opencontainers.image.description="Kimi-K3 OpenAI serving runtime for 4-node x 8x A100" \
       io.k3.cuda_arch="sm80" \
-      io.k3.patchset="kda-sm80-int64-v1" \
+      io.k3.patchset="kda-sm80-int64+mxfp4-marlin-moe-sm80-v2" \
       io.k3.base_digest="sha256:d5fc27444ec6a9f52ac18a81acd88394f1840ce747c3eb989a5b4b0316079752"
 
 # CPU-safe contract: importing the API/parser modules and checking installed
@@ -52,6 +88,7 @@ import importlib
 import pathlib
 import torch
 import vllm
+from vllm import _custom_ops
 
 expected = "0498dc7ea9204f1863b46515816f5d8d458e01e7"
 assert pathlib.Path("/opt/vllm-build/VLLM_COMMIT.txt").read_text().strip() == expected
@@ -67,7 +104,14 @@ delta = (root / "third_party/flash_linear_attention/ops/chunk_delta_h.py").read_
 assert "(i_tg * H + i_h).to(tl.int64) * K * V" in chunk
 assert "(boh * H + i_h).to(tl.int64) * V * K" in delta
 assert "sm_80" in torch.cuda.get_arch_list()
-print("K3-OPENAI-CONTRACT PASS mode=cpu patch=kda-sm80-int64-v1")
+assert pathlib.Path(
+    "/opt/k3-patches/mxfp4-marlin-moe-sm80.patch"
+).is_file()
+assert hasattr(torch.ops._moe_C, "moe_wna16_marlin_gemm")
+print(
+    "K3-OPENAI-CONTRACT PASS mode=cpu "
+    "patch=kda-sm80-int64+mxfp4-marlin-moe-sm80-v2"
+)
 PY
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20m --retries=5 \

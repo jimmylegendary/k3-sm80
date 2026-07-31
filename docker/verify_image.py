@@ -14,7 +14,7 @@ BASE_DIGEST = "sha256:d5fc27444ec6a9f52ac18a81acd88394f1840ce747c3eb989a5b4b0316
 EXPECTED_LABELS = {
     "org.opencontainers.image.revision": COMMIT,
     "io.k3.cuda_arch": "sm80",
-    "io.k3.patchset": "kda-sm80-int64-v1",
+    "io.k3.patchset": "kda-sm80-int64+mxfp4-marlin-moe-sm80-v2",
     "io.k3.base_digest": BASE_DIGEST,
 }
 
@@ -59,6 +59,7 @@ def metadata_errors(metadata: dict[str, object]) -> list[str]:
 
 CPU_PROBE = r"""
 import importlib, pathlib, torch, vllm
+from vllm import _custom_ops
 expected = "0498dc7ea9204f1863b46515816f5d8d458e01e7"
 assert pathlib.Path("/opt/vllm-build/VLLM_COMMIT.txt").read_text().strip() == expected
 for module in (
@@ -73,6 +74,8 @@ delta = (root / "third_party/flash_linear_attention/ops/chunk_delta_h.py").read_
 assert "(i_tg * H + i_h).to(tl.int64) * K * V" in chunk
 assert "(boh * H + i_h).to(tl.int64) * V * K" in delta
 assert "sm_80" in torch.cuda.get_arch_list()
+assert pathlib.Path("/opt/k3-patches/mxfp4-marlin-moe-sm80.patch").is_file()
+assert hasattr(torch.ops._moe_C, "moe_wna16_marlin_gemm")
 print("CPU_CONTRACT_PASS")
 """
 
