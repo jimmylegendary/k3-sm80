@@ -90,4 +90,4 @@ kda 의존 체인은 위에서 닫힌다: fla_kda → fla_common + `_vllm_shims`
 ## 7. 하네스 폴백 규약
 
 k01~k04·k07 은 **vendor 우선 → 실패 시 vllm 폴백**(try/except). 어느 쪽을 썼는지 리포트 evidence(`kernel_import`/`kernel.source`/`native_arm_source`)에 기록된다.
-- k11·k12 는 `vendor.dsa_ops`를 직접 import하며 폴백이 없다(대상은 배포 패치본).
+- k11·k12 는 `vendor.dsa_ops`를 직접 import하며 폴백이 없다(대상은 배포 패치본). k05(Marlin)는 vLLM C-확장이라 vendor 대상 아님.
