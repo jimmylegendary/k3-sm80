@@ -21,6 +21,12 @@
 권장 승격 순서: lane 01 TP8/PP4 256k → lane 02 TP8/DP4/EP32 256k →
 lane 03 +DSpark → lane 04 1M+software FP8 KV → lane 05 두 기능 결합.
 
+**2026-11-09 K3.1-Pro P1(walking skeleton) 추가**: K3 이미지·lane은 그대로 두고, vLLM main 핀 `a3c14efb` 위에
+K3.1용 이미지(`k31-sm80-openai:a3c14efb-sm80-v1`, `docker/Dockerfile.k31-*`)·패치 세트(`docker/patches-k31/`: marlin SM80
+rebase + `TRITON_MLA_SPARSE`/SM80 indexer(PR #47629 rebase) + K3.1 DSA glue)·kernel-kit k11/k12·lane 11(TP8/PP4 256k
+bf16 KV)을 별도로 올렸다. 호스트 검증(패치 적용·py_compile·AST·ruff·unittest·CPU dry-run·Triton 인터프리터 대조·sm_80
+컴파일)까지이며 A100 실행은 없다 — 증거 표 `docs/A100-K31-RESULTS.md`는 전부 INCOMPLETE. 설계·근거는 `docs/K31-SUPPORT-REVIEW.md`.
+
 날짜: 2026-07-28 · 스펙: `docs/superpowers/specs/2026-07-28-k3-sm80-serving-design.md` (접근 A 승인본)
 
 **버전 고정 (전 산출물 공통 핀)**
@@ -32,6 +38,10 @@ lane 03 +DSpark → lane 04 1M+software FP8 KV → lane 05 두 기능 결합.
 | vLLM kimi-k3 브랜치 | `0498dc7ea9204f1863b46515816f5d8d458e01e7` (PR #50000 head) | https://github.com/vllm-project/vllm/pull/50000 |
 | vLLM 릴리스 wheel | `vllm==0.26.0` (2026-07-27) | https://pypi.org/pypi/vllm/0.26.0/json |
 | hatir / hat-schema | `3a60d38` / `98ea3f7` | phase0/verdict.json |
+| **K3.1 모델** | `moonshotai/Kimi-K3.1-Pro` @ `d9e99b0792a5e93b78ea9bea62a68167e36ddd9e` | recon/k31-config.md |
+| **K3.1용 vLLM main 핀** | `a3c14efbc77c018e8bf579935095a87721349e05` (2026-11-09, split 3/6 #66037 포함) | recon/vllm-upstream-k31.md |
+| **SM80 DSA 커널 출처** | vLLM PR #47629 head `064801dd`(원본 #38476) → `docker/patches-k31/triton-mla-sparse-sm80.patch`(int64·workspace 수정) | docker/patches-k31/README.md |
+| K3.1 DSpark draft(P2) | `Inferact/Kimi-K3.1-Pro-DSpark-preview` @ `6a2ef20a` | recon/k31-config.md §6 |
 
 파일 지도: 조사 = `recon/{vllm-upstream,k3-config,kda-fla,a100-comms}.md` · Phase 0 = `phase0/{twin_a100_x32.json,k3_model.py,results.json,REPORT.md,verdict.json,VERIFICATION.md}` · 반입 킷 = `a100-kit/{RUNBOOK.md,DECISION-TREE.md,probe_35922.sh,probe_kda_fla.py,probe_k3_modules.py,VERIFICATION.md}`
 

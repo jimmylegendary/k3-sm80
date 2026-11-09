@@ -92,6 +92,30 @@ bf16 잔여 53.3%(KDA 30.6B + shared 12.2B + MLA·latent proj·lm_head)의 양�
 - 완료 판정: 실측 tok/s ≥ Phase 0 real 예측의 50%에서 시작, 튜닝으로 격차 축소;
   최종 수용 기준은 Jimmy 재가('쓸 만한 속도' 조작화, SUMMARY §4-②).
 
+## K3.1-Pro 확장 (2026-11-09 추가 — 점진적 해상도, 설계는 `docs/K31-SUPPORT-REVIEW.md` §5)
+
+원칙 동일: **커널은 먼저 단독 검증(S2), 통과한 것만 vLLM 통합(S4)**. K3 스택(핀 `0498dc7e` 이미지·lane 01~05)은 사내에서
+동작 중이므로 보존하고, K3.1은 새 핀(vLLM main `a3c14efb`) 이미지·lane을 **병행** 추가한다.
+
+### K3.1 P1 — walking skeleton (호스트 구현 완료 2026-11-09, A100 1라운드 대기)
+- 범위: TP8/PP4 · 256k · bf16 KV 명시 · `TRITON_MLA_SPARSE` · DSpark 없음 · enforce_eager · max_num_seqs 1.
+- 산출물: `docker/patches-k31/`(marlin SM80 rebase, PR #47629 기반 SM80 sparse MLA+indexer, K3.1 DSA glue),
+  `docker/Dockerfile.k31-{full,openai}`·`build-k31.sh`·`release-k31.sh`·`verify_k31_image.py`·`PULL-K31.md`,
+  `run/11-load-k31-image.sh`·`run/21-k31-kernel-test.sh`, kernel-kit `k11_dsa_indexer_sm80`·`k12_sparse_mla_sm80`(+ k01~k09 재vendor),
+  `deploy/11-k31-tp8-pp4-256k-safe/`, `docs/A100-K31-RESULTS.md`.
+- 호스트 게이트(통과): 핀 worktree 패치 3개 순차 `git apply --check`·`git diff --check`, py_compile·AST 심볼·ruff, `python3 -m unittest`,
+  `run_all.sh --cpu-dry-run`, `render_lanes --check drift=0`(lane 01~05 byte-identical 스냅샷), `validate_lanes`, Triton 인터프리터
+  k11/k12 fp32 대조(PASS 근거 아님·evidence), sm_80 PTX 컴파일.
+- 종료 판정(사내 A100): `run/21` 에서 k01~k04·k07·k08·k11·k12 NUMERIC/SANITIZER/SHAPES PASS(PERF 측정 전용) →
+  `make -C deploy/11-… gates up gate-load gate-context smoke` 가 K3.1-Pro 실체크포인트로 응답(greedy 재현·reasoning 채널) → 증거 표 기입.
+- 상한: 속도 미보증, 1M·DSpark·FP8 KV·CUDA graph 미지원.
+
+### K3.1 P2 (예정) — 넓이·깊이
+- DP4/EP32 lane + DSpark preview(draft JSON `kv_cache_dtype: bfloat16` 필수), k11/k12 PERF gate, CUDA graph(`_warmup_autotune` 이식), batch>1.
+
+### K3.1 P3 (예정) — 장문맥·성능
+- 1M(PP4 bf16 우선), software-FP8 KV 재설계(PR #64783/RFC #48374 계열), phase0 모델 DSA 항 추가·재보정.
+
 ## 반복 루프
 사내 실행 로그(`kernel-report/` tar)를 repo로 반입 → 호스트에서 분석·수정 → push →
 사내 pull 재실행. 모든 단계 전환은 커밋에 판정 근거 파일 포함.

@@ -195,6 +195,18 @@ vLLM **병합된 main**에는 SM80 DSA 경로가 없지만(B1·B2), **open PR·R
 **P1 정직한 상한**: 속도 미보증(PERF 측정만 공개), 256k·bf16 KV·`max_num_seqs=1`·`enforce_eager`, DSpark 없음, 1M 미지원, Q fp8 미적용(DeepGEMM 대비 top-k 경계 차이 가능).
 **P1 작업 단위(규모)**: pin 상향+base 재빌드+패치 정리(**M~L**, 빌드 수 시간) · **#47629 rebase 패치**(M) · K3.1 indexer glue + k11/k12 하네스(S~M) · lane/테스트/문서 앵커 갱신(S~M, 59파일) · A100 1라운드(러너 Jimmy, RELAY 회신). 신규 커널 저작은 0에 가깝다.
 
+### 5.1 P1 구현 현황 (2026-11-09, ultracode 워커 4명 + 마스터 통합 — 호스트 검증까지)
+
+| 항목 | 산출물 | 호스트 검증(실행 결과) |
+|---|---|---|
+| vLLM 패치 세트 | [patches-k31](/home/jimmy/repos/k3-sm80/docker/patches-k31) = `mxfp4-marlin-moe-sm80-main`(ops.cu 5 hunk, `csrc/moe/`로 이동) · `triton-mla-sparse-sm80`(PR #47629 커널 2파일 이식 + 핀 `flashattn_mla_sparse.py` 골격으로 백엔드 신작 174줄 + 디스패치/가드/우선순위/registry; **int64 승격**·workspace `mid_out_getter` 추가) · `k31-sm80-dsa-glue`(`dsa.py` SM80 분기: stock CUDA K-insert, `per_token_group_quant_fp8` Q, env override) | 새 핀 worktree에 1→2→3 순차 `git apply --check`·적용·`git diff --check` 통과; py_compile 15파일; AST 302 import·25 호출 바인딩; ruff; **CPU venv에서 실제 vLLM 소스로 백엔드·glue 테스트 42 passed**; Triton 인터프리터로 `_forward_mqa_kernel`·`sparse_attn_indexer` e2e 7 passed, 커널 테스트 logits 34/34·sparse 23; **sm_80 PTX+cubin 컴파일 12 config OK(최대 smem 52 KiB)**; 음성 대조: PR 원본 커널은 row id ≥ 3,728,270에서 segfault(패치본 통과), K3.1 fused Q 커널은 sm_80에서 `fp8e4nv not supported`(glue 필요 확인) |
+| 이미지 레시피 | `Dockerfile.k31-full`(CUDA 13.0.3·torch 2.14.0·**Ubuntu 24.04** — 핀 CMake가 g++≥13 요구) → `Dockerfile.k31-openai`(패치 3개, overlay 10파일 파생·검증 게이트) · `build-k31.sh`·`release-k31.sh`·`verify_k31_image.py`·`PULL-K31.md` · `run/11`·`run/21` | `docker build --check` 경고 0, `bash -n`, heredoc py_compile, overlay 로직 음성 테스트 4종, release/load 스크립트 stand-in e2e; **full base 빌드 2026-11-09 23:21 백그라운드 시작**(MAX_JOBS 6, 예상 2~3h+) |
+| kernel-kit | k01~k09 핀 재vendor(+쉼 5종), `vendor/dsa_ops`, `common/dsa_ref.py`·`dsa_gate.py`·`triton_interp.py`, `k11_dsa_indexer_sm80`·`k12_sparse_mla_sm80`(4게이트, `--interpret`), 등록(shapes·PERF_POLICY·TOL·run_all·relay `^k\d\d_`+≤12줄) | shapes/timing/report selftest·check_no_vllm 33파일·`run_all --cpu-dry-run` exit 0(INC=11, RELAY 10줄); venv kernel 테스트 112 OK; **인터프리터 k11 5/5(logits rmse_rel ≈9e-8, top-k 일치 1.0), k12 3/3(rmse_rel ≤2.0e-3)** — PASS 근거 아님 |
+| deploy | `LaneSpec` 모델 필드(K3 기본값) + 조건부 템플릿, lane `11-k31-tp8-pp4-256k-safe`, gate 행 k08/kda/k11/k12, `A100-K31-RESULTS.md`+`--evidence-k31` | `render_lanes --check drift=0`, **lane 01~05 35파일 SHA-256 스냅샷 불변**(구·신 도구 `diff -r` 동일), `validate_lanes errors=0`, compose config rc=0, dry-run argv 32 flag 핀 소스 대조 |
+| 통합 결함(리더 검출) | A. lane 11이 K3 전용 `verify_image.py`를 호출 → **수정 완료**(`image_verifier=docker/verify_k31_image.py`, 재렌더·테스트) · B. `vendor/dsa_ops`가 PR 원본이라 k11/k12가 배포 커널이 아닌 커널을 판정 → **패치본 재vendor + k12 큰 row id 케이스 + relay 비-KernelReport 무시**로 수정 중 | A: deploy 129 tests OK · B: 완료 후 §8에 기입 |
+
+GPU 없이 못 한 것(사내 1라운드 판정): 실제 CUDA op(`indexer_k_quant_and_cache`·`per_token_group_quant_fp8`·`persistent_topk`) 호출, Triton autotune·CUDA graph, TP8×PP4 실체크포인트 로드·smoke, bf16 커널 정밀도(인터프리터는 fp16 치환·RNE 보정), 이미지 빌드 완료 여부.
+
 ## 6. Jimmy 결정 요청
 
 | # | 질문 | 선택지 | 추천 |
