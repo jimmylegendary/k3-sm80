@@ -3,6 +3,9 @@
 > 상태: **검토(구현 전)**. 1차 출처(HF 체크포인트·vLLM main 소스)를 직접 읽어 확정한 사실, 그로부터 도출한 "무엇을 바꿔야
 > 하는가", 그리고 읽기 전용 독립 검증(ultracode 워커 3명, vLLM main `a3c14efb` 원문 대조·리포 전수 grep)의 판정을 합친 판이다.
 > 모든 SM80 판정은 **소스 판독**이며 A100에서 실행한 것은 없다. 구현 계획은 §5, Jimmy 결정 요청은 §6, 검증 판정은 §8, 앵커 전수표는 부록.
+> **전제(Jimmy, 2026-11-09)**: K3는 리포 구성(vLLM `0498dc7e` + SM80 패치 4개, lane 01~05)으로 **사내 4노드×8 A100 80GB에서 이미 동작 중**이다. 파일 반출 불가라
+> 리포의 증거 표([A100-5LANE-RESULTS.md](/home/jimmy/repos/k3-sm80/docs/A100-5LANE-RESULTS.md))는 INCOMPLETE로 남아 있을 뿐이다. 따라서 **K3 스택은 보존 대상**이고,
+> 이 문서의 질문은 "지금 되는 것에서 무엇을 **업데이트**하고 무엇을 **추가**해야 최신 vLLM에서 K3.1이 같은 클러스터에서 도는가"다(§0.5).
 
 ## 0. 한 줄 결론
 
@@ -14,10 +17,38 @@ K3.1-Pro는 K3와 **가중치 레이아웃이 사실상 동일**하다 — 차�
 | B2 | **sparse MLA 백엔드가 SM80에 하나도 없다** — 첫 DSA 층의 `MLAAttention.__init__` → `get_attn_backend(use_sparse=True)`에서 **ValueError**(전체의 첫 실패) | `cuda.py:136-152` SM80 분기 후보 7개 전부 탈락(dense 4종 `sparse not supported`, sparse 3종 `compute capability not supported`; `backend.py:325-333`), 명시 선택 시 `cuda.py:441-445`, 자동 시 `:470-474`. 2차 방어선 `mla_attention.py:641-647` RuntimeError. dense 강제 스위치 없음 | **SM80용 sparse MLA 백엔드 신규** — 단, 기존 Triton `decode_attention_fwd`를 재사용하는 **신규 커널 0개·약 230줄 Python 백엔드**로 충분(§2 B2) |
 | B1 | **DSA indexer 커널이 SM80에서 돌지 않는다** — Triton `tl.float8e4nv`(SM89+) 3곳 + DeepGEMM 호출 3곳·metadata 2곳(SM90+) | `ops/dsa_indexer.py:69,201-202,354`(fp8e4nv), `sparse_attn_indexer.py:882,1091,408`(`fp8_fp4_*mqa_logits`), `indexer.py:1837,1919`(metadata); DeepGEMM 자체가 `attention.hpp:147,197,232`에서 비 SM90/100/120 거부, 없으면 `deep_gemm.py:205-211 _missing()` | **SM80용 indexer logits 경로 신규(k11)** — bf16 Q × uint8(E4M3) K → Triton MQA logits(decode paged + prefill). **top-k는 교체 불필요**(`auto`→`persistent`, 전 arch 빌드), **index-K 캐시 쓰기는 stock CUDA op 재사용**(§2 B1) |
 
-따라서 K3.1 지원 = **(a) base pin을 main(≥ split 3/6 #66037, 11-09)으로 올리고 SM80 패치 4개를 각각 삭제·rebase·재설계** + **(b) k11 SM80 indexer logits** +
+따라서 K3.1 지원 = **(a) base pin을 main(≥ split 3/6 #66037, 11-09)으로 올리고 K3용 SM80 패치 4개를 각각 삭제·rebase·재설계해서 다시 얹기** + **(b) k11 SM80 indexer logits** +
 **(c) k12 SM80 sparse MLA 백엔드** + **(d) 리포 앵커 갱신**(핀 손작성 59파일·lane·DSpark draft·shape 상수·gate 등록). 커널 신규 저작은 **k11 하나**로 줄었고,
-pin 상향이 생각보다 무겁다(base 이미지 전체 소스빌드 재수행 + torch 2.13→2.14 등 의존성 드리프트). K3 자체의 A100 증거가 전부 `INCOMPLETE`이므로
-([A100-5LANE-RESULTS.md](/home/jimmy/repos/k3-sm80/docs/A100-5LANE-RESULTS.md)) **새 pin 위에서 K3 회귀(k01~k08)와 K3.1 신규 gate(k11·k12)를 같은 A100 라운드에서 돌리는 것**이 P1 종료 조건이다.
+pin 상향이 생각보다 무겁다(base 이미지 전체 소스빌드 재수행 + torch 2.13→2.14 등 의존성 드리프트). **사내에서 동작 중인 K3 이미지·lane은 그대로 두고** 새 pin 이미지를 따로 만들어 K3.1 lane을 올린 뒤,
+새 이미지가 K3 회귀(k01~k08 + K3 lane smoke)도 통과하면 하나로 합친다(§5·§6 D2).
+
+
+### 0.5 델타 판단 — 사내에서 돌아가는 K3를 기준으로, 최신 vLLM에서 K3.1을 같은 4노드×8 A100 80GB에서 돌리려면
+
+확인 요청 2건(이 문서가 답할 수 없는 현장 사실): ① 사내 동작 구성이 리포 HEAD(2026-07-31, `ad84b4a`)와 같은가 — 현장에서 손본 것이 리포에 없으면 그것부터 RELAY로 옮겨야 K3.1 이미지에 실린다 ② 동작 확인된 lane 번호(01~05 중)와 context·DSpark 여부.
+
+| 구분 | 항목 | 왜 필요한가 | 규모 |
+|---|---|---|---|
+| 업데이트 | **vLLM pin** `0498dc7e`(7-28 브랜치) → main ≥ #66037(11-09). base 이미지 `kernelkit` 전체 소스빌드 재수행(`TORCH_CUDA_ARCH_LIST=8.0`, 수 시간), torch 2.13.0→2.14.0·torchvision 0.29·flashinfer-python 0.7.3·setuptools ≥78.1.1, `Dockerfile.full:142` torch assert·`build.sh` VLLM_COMMIT 인자·PULL.md 티어 표 | K3.1 코드(`dsa_config`, `KimiK31ForConditionalGeneration`, packed hybrid KV)는 main에만 있고 0.34.0은 미출시. 7-28 핀에 K3.1을 백포트하는 것은 KV cache 인터페이스 변경(split 3/6)까지 끌어와야 해서 비현실적 | M~L |
+| 업데이트 | **SM80 패치 4개** → `kda-sm80-int64` 삭제(upstream 반영) · `mxfp4-marlin-moe-sm80` 구조적 rebase(`csrc/moe/marlin_moe_wna16/ops.cu` 2 hunk 재작성; **K3·K3.1 공통 MoE 생명줄**, MoE는 K3.1에서 불변) · `mla-fp8-kv-sm80` K3.1 target에는 무효(DSA 층이 K3 `mla.py`를 안 씀) → P3 재설계, K3 1M lane 유지용이면 구조적 rebase · `dspark-bf16` 퇴역(upstream `speculative_config.kv_cache_dtype`로 대체) | 사내 K3가 도는 이유가 이 패치들이므로 새 pin에도 같은 효과를 다시 얹어야 K3가 계속 돌고 K3.1의 MoE·KDA도 돈다 | M |
+| 업데이트 | **lane 설정**(render_lanes/lane_specs/.env): 이미지 태그, `K3_TARGET_MODEL`(K3.1), `K3_SERVING_ROOT`, served name, `--attention-backend`(K3.1만 SM80 sparse 백엔드; K3는 TRITON_MLA 그대로), `--kv-cache-dtype bfloat16` 명시 유지(§B3 훅), speculative JSON에 `"kv_cache_dtype":"bfloat16"`(§B3 draft 기본값 주입), draft → `Inferact/Kimi-K3.1-Pro-DSpark-preview`, `VLLM_KV_CACHE_DTYPE_SKIP_LAYERS` 제거, `reasoning_effort` smoke | K3.1 전용 분기 4개(백엔드·kv dtype 훅·draft 기본값·draft 모델)가 K3 lane과 다르다 | S |
+| 업데이트 | **kernel-kit**: `vendor/` 재vendor(k01/k02/k04 시험 대상이 main 커널로 바뀜), `relay.py` 필터 `startswith("k0")`→`^k\d\d_`, `PERF_POLICY`/`TOL`/`KERNEL_IDS` 등록, `dspark_ref.TARGET_AUX_LAYER_IDS=(75,79,83,87,91)` | 새 pin 커널로 K3 회귀를 재실행해야 "K3가 계속 된다"를 증명 | S~M |
+| 업데이트 | 테스트·문서 핀 표기(59파일), `recon/k31-config.md` 신규, PLAN·README·SUMMARY | | S |
+| **추가** | **k11 SM80 DSA indexer logits 경로**: `sparse_attn_indexer()` prefill/decode 분기에 SM80 Triton MQA logits(bf16 Q × uint8 E4M3 K 소프트웨어 디코드, paged) 추가, `indexer.py` metadata 호출 가드, `use_fused_k_insert=False` 스위치로 stock CUDA `indexer_k_quant_and_cache` 사용, top-k는 upstream `persistent` 그대로 | upstream은 DeepGEMM(SM90+)·Triton fp8e4nv(SM89+)뿐 — A100에 경로 없음(§B1) | M |
+| **추가** | **k12 SM80 sparse MLA 백엔드** `TRITON_MLA_SPARSE`(가칭): `SparseMLACommon*` 상속 Python 백엔드 ~230줄, `_forward_mqa_kernel`이 기존 `decode_attention_fwd(page_size=1, req_to_token=physical_topk, b_seq_len=valid_counts)` 호출, bf16 KV, block 64·`align_blocks_to_rows`·workspace 예약·spec-as-decode, registry·`cuda.py` 배선. bring-up smoke는 `XPU_MLA_SPARSE` + int64 2줄 패치 | SM80에 sparse 백엔드가 없어 첫 DSA 층에서 ValueError(§B2). dense 폴백은 스위치도 없고 학습 분포 밖 | M |
+| **추가** | **K3.1 lane**: P1 = TP8/PP4 256k bf16(lane 01형), P2 = DP4/EP32 + DSpark preview, P3 = 1M; gate 행 k11·k12(GATE_MATRIX·Makefile·validate_lanes·A100-5LANE-RESULTS) | | S |
+| **추가**(P3) | DSA 층용 software-FP8 latent(새 Impl `do_kv_cache_update`), indexer prefill logits 버퍼 1M 사이징, phase0 DSA 항 | 1M·DP4/EP32에서만 필요(아래 메모리 표) | M |
+| **변경 없음** | KDA Triton prefill/decode 경로, MXFP4 Marlin MoE 커널(패치 rebase 후), SiTU·AttnRes·latent-MoE 경로, 토크나이저·`kimi_k3` 파서, 4노드 native MP(Ray 없음)·`.env` 1개·RELAY 회신 체계, 체크포인트 반입 방식(96 shard, +357 MB) | K3.1이 바꾼 것은 24개 attention 층뿐 | — |
+
+**메모리 적합성(추정 — phase0 모델·체크포인트 바이트 기반, 실측 아님)**: 가중치 = expert MXFP4 1,446.5 GB + 비expert bf16 113.8 GB(K3.1 indexer 포함, vision 제외).
+
+| 토폴로지 | 가중치/GPU | 여유(0.92×80 GB 기준) | K3.1 attention cache bf16, 토큰당/GPU | @256k | @1M |
+|---|---|---|---|---|---|
+| TP8/PP4 (lane 01형, 32 GPU 1 replica) | 48.8 GB | ≈24 GB | 6층 × (1,152+132) = **7,704 B** | 2.0 GB ✓ | **8.1 GB ✓** |
+| TP8/DP4/EP32 (lane 02~05형) | 45.2(expert/32) + 14.2(비expert/8) = **59.4 GB** | ≈14 GB | 24층 × 1,284 = **30,816 B** | 8.1 GB ✓ | 32.3 GB ✗ (FP8 latent여도 17.8 GB ✗) |
+
+→ **K3.1 1M은 PP4 토폴로지에서 bf16으로 가는 것이 자연스럽다**(software-FP8 불필요). DP4/EP32에서 1M은 FP8+PP 조합 또는 DCP가 필요해 P3 이후. 256k는 두 토폴로지 모두 bf16으로 충분.
+드라이버: torch 2.14.0 휠의 CUDA 버전(cu130 예상)이 사내 드라이버와 맞는지 `run/00-check-node.sh`에서 선확인(a100-kit RUNBOOK §1은 nvcc 13.0 전제).
 
 ## 1. 사실관계 (1차 출처, 핀 고정)
 
@@ -131,10 +162,10 @@ K3 핀(`9f62e4e9`, [k3-config.md](/home/jimmy/repos/k3-sm80/recon/k3-config.md))
 | capability | P1 (walking skeleton) | P2 (넓이+깊이) | P3 (장문맥·성능) | 미룸 |
 |---|---|---|---|---|
 | vLLM base pin | main 커밋(≥ #66037) base 이미지 재빌드(torch 2.14·flashinfer 0.7.3), 패치 {marlin 구조적 rebase}, kda 삭제, fp8-kv·dspark-bf16 제외 | v0.34.0 출시 시 재핀 | — | — |
-| K3 회귀(k01~k08) | 재vendor 후 새 pin에서 **A100 PASS**(k01 long-T로 int64 퇴역 확정) | c01·k10 포함 | k09 재설계분 | — |
+| K3 보존·회귀 | **사내 K3 이미지·lane은 손대지 않음(병행)**. 새 pin 이미지에서 재vendor k01~k08 **A100 PASS**(k01 long-T로 int64 퇴역 확정) | 새 이미지로 K3 lane smoke → 통합(이미지 1개) | k09 재설계분 | — |
 | DSA indexer(k11) | Triton MQA logits(decode paged + prefill), bf16 Q, stock CUDA K-insert 스위치, 소프트웨어 E4M3 읽기; NUMERIC(logits 오차 + top-k 집합 일치)/SANITIZER/SHAPES **PASS**, PERF 측정 전용 | PERF gate, decode logits 청크화 | 1M prefill logits 버퍼 사이징 | mxfp4 index-K, DeepSelect, fp8 Q 동일성 |
 | sparse MLA(k12) | **A안** Python 백엔드(기존 `decode_attention_fwd` 재사용, 신규 커널 0) **bf16 latent**; bring-up smoke는 **B안** `XPU_MLA_SPARSE`+int64 2줄 패치; NUMERIC/SANITIZER/SHAPES PASS, PERF 측정 전용 | PERF gate, fused gather-MQA 커널(~250줄), CUDA graph 캡처, batch>1 | software-FP8 latent를 새 Impl `do_kv_cache_update`로 재설계 | fp8_ds_mla 네이티브, DCP/ShardQ, HiSparse |
-| 서빙 lane | **lane 01 K3.1(TP8/PP4, 256k, `--kv-cache-dtype bfloat16` 명시, `--attention-backend <SM80 sparse>`, DSpark 없음)** `gates up gate-load gate-context smoke` RELAY | lane 02/03 K3.1(EP32, DSpark preview + draft JSON `kv_cache_dtype: bfloat16`, dspark-bf16 패치 퇴역) | lane 04/05 K3.1(1M, software-FP8 KV) | specialized decode, P/D |
+| 서빙 lane | **K3.1 lane 01형(TP8/PP4, 256k, `--kv-cache-dtype bfloat16` 명시, `--attention-backend <SM80 sparse>`, DSpark 없음)** `gates up gate-load gate-context smoke` RELAY — 기존 K3 lane과 별도 디렉터리·별도 이미지 | K3.1 lane 02/03형(DP4/EP32, DSpark preview + draft JSON `kv_cache_dtype: bfloat16`) | K3.1 1M: **PP4 토폴로지 bf16 우선**(§0.5 메모리 표), DP4/EP32 1M은 software-FP8+PP | specialized decode, P/D |
 | 렌더러·API | `reasoning_effort` smoke 1케이스, 파서 kimi_k3 | tool-call·multi-turn(reasoning_content 회신) smoke | — | vision |
 | 코스트 모델 | 변경 없음(판정 유지 근거 §3) | — | DSA 항 추가 + k11/k12 실측 재보정 | — |
 | 문서 | recon/k31-config.md, PLAN S2' 등록, README 현황, pin 표기 59파일 | RUNBOOK K3.1 | SUMMARY 재작성 | — |
@@ -148,7 +179,8 @@ K3 핀(`9f62e4e9`, [k3-config.md](/home/jimmy/repos/k3-sm80/recon/k3-config.md))
 | # | 질문 | 선택지 | 추천 |
 |---|---|---|---|
 | D1 | base pin | (a) 지금 main 커밋 고정(`a3c14efb` 11-09 또는 #66037 병합 커밋 `4088c283`) → v0.34.0 출시 시 재핀 / (b) v0.34.0 대기 / (c) 4/6~6/6 병합 대기 | **(a)** — 3/6까지로 NVIDIA 기본 경로가 서빙 가능하며, 남은 분할은 AMD·ROCm·P/D·DCP·SM100 top-k라 SM80 무관. base 재빌드는 어차피 1회 |
-| D2 | K3 lane 처우 | (a) 5 lane 모두 K3.1로 전환, K3는 kernel-kit 회귀(k01~k10)와 `.env` 한 줄(`K3_TARGET_MODEL`)로만 유지 / (b) K3·K3.1 lane 병행(디렉터리 10개, 이미지 2개) | **(a)** — K3 A100 증거가 없어 잃는 것이 없고, 같은 모델 클래스라 이미지 1개로 둘 다 가능 |
+| D0 | 사내 K3 동작 구성 확인 | 리포 HEAD(`ad84b4a`, 7-31)와 동일한가 / 현장 수정 있음(RELAY로 전사 필요) · 동작 lane 번호·context·DSpark 여부 | 전사 먼저 — 새 이미지에 빠지면 K3 회귀가 깨진다 |
+| D2 | K3 lane 처우 | (a) 5 lane 모두 즉시 K3.1로 전환 / (b) **이행기 병행**: 사내 K3 이미지·lane은 그대로, K3.1은 새 pin 이미지 + 별도 lane 디렉터리, 새 이미지가 K3 회귀·smoke를 통과하면 이미지 1개로 통합 | **(b)** — K3가 실제로 돌고 있으므로 보존이 우선. 같은 모델 클래스라 통합은 `.env` 모델 id 한 줄 차이 |
 | D3 | P1 범위 | 위 §5대로(bf16 KV, DSpark·1M 제외, k12는 A안+B안 smoke) / DSpark를 P1에 포함 | **§5대로** — draft가 "preview"이고 draft 기본값 주입(§B3) 처리가 필요해 P2가 안전 |
 | D4 | A100 1라운드 구성 | K3 회귀 + K3.1 k11/k12 + lane 01 K3.1을 한 번에 / 커널 라운드와 lane 라운드 분리 | **한 번에**(회신 채널이 RELAY 하나라 왕복 최소화), 단 kernel-kit PASS가 lane 진입 조건(PLAN 원칙) |
 
