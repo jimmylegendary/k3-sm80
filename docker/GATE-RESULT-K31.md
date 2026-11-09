@@ -56,5 +56,14 @@ K3용 [GATE-RESULT.md](/home/jimmy/repos/k3-sm80/docker/GATE-RESULT.md)와 별�
 ### 정직한 상한
 이 PASS는 "이미지가 계약대로 조립됐고 CPU에서 import된다"까지다. 커널 실행·백엔드 선택·서빙은 사내 A100에서 `python3 docker/verify_k31_image.py <image> --gpu` → `run/21` → lane 11 smoke 순으로 판정한다.
 
-## 3. Release
-`K31_OPENAI_GITHUB_UPLOAD=1 bash docker/release-k31.sh` → GitHub Release `openai-k31-a3c14efb-sm80-v1`(docker save → zstd → 1900 MB 분할, `SHA256SUMS`). 결과는 완료 후 기입.
+## 3. Release — **UPLOAD-PASS** (2026-11-10 01:43)
+
+| 항목 | 값 |
+|---|---|
+| URL | https://github.com/jimmylegendary/k3-sm80/releases/tag/openai-k31-a3c14efb-sm80-v1 (private repo) |
+| 자산 | `k31-sm80-openai-a3c14efb-sm80-v1.tar.zst.part-aa/ab/ac` 각 1,992,294,400 B · `part-ad` 197,354,693 B (합 ≈ 6.17 GB, `docker save` 20.7 GB를 zstd -10 압축) · `SHA256SUMS`(460 B) · `image-inspect.json`(7,910 B) |
+| 로컬 사본 | `docker/releases/openai-k31-a3c14efb-sm80-v1/`(gitignored) |
+| 사내 반입 | `bash run/11-load-k31-image.sh`(gh 자동 다운로드 → `sha256sum -c` → 결합 → `docker load`, 멱등·part 오염 검사). 수동: `cat …part-* | zstd -d | docker load` — [PULL-K31.md](/home/jimmy/repos/k3-sm80/docker/PULL-K31.md) |
+| 이미지 ID 대조 | load 후 `docker image inspect k31-sm80-openai:a3c14efb-sm80-v1 --format '{{.Id}}'` = `sha256:f5ea76f4f007019ee2098d886582bf79faaa1c506d885292e8292f432bd2e40b` 이어야 한다(§2). `verify_k31_image.py --gpu`가 같은 값을 검사한다 |
+
+K3 Release(`openai-0498dc7e-sm80-v3`)와 `run/10`은 변경 없음.
