@@ -57,9 +57,10 @@ K3 핀(`9f62e4e9`, [k3-config.md](/home/jimmy/repos/k3-sm80/recon/k3-config.md))
 
 ### B1. DSA indexer — DeepGEMM 하드 의존 → 엔진 기동 실패
 - `KimiK3DSAIndexer`(`dsa.py:108-412`)는 upstream `torch.ops.vllm.sparse_attn_indexer`를 그대로 호출한다(`dsa.py:388-412`).
-  그 op의 CUDA 구현은 logits를 전부 DeepGEMM `fp8_fp4_paged_mqa_logits`/`fp8_fp4_mqa_logits`로 계산하고,
-  `SparseAttnIndexer.__init__`이 `has_deep_gemm()` 없으면 RuntimeError(`sparse_attn_indexer.py:1285`).
-  DeepGEMM 지원 아치는 `support_deep_gemm()` = SM90/SM100/SM120(`cuda.py:693-695`). **SM80 폴백 없음.**
+  그 op의 CUDA 구현은 logits를 전부 DeepGEMM `fp8_fp4_paged_mqa_logits`/`fp8_fp4_mqa_logits`로 계산한다.
+  `SparseAttnIndexer.__init__`은 `has_deep_gemm()`(패키지 또는 vLLM wheel 동봉 사본의 **존재** 검사이지 capability 검사가 아님)이 거짓이면
+  RuntimeError(`sparse_attn_indexer.py:1285-1289`), 참이면 첫 호출에서 DeepGEMM JIT로 넘어가는데 DeepGEMM 자체가 SM90/SM100/SM120 전용이다
+  (`cuda.py:689-695` `support_deep_gemm()`, `deep_gemm.py:151-156`). **어느 쪽이든 SM80 경로 없음** — 실패 지점(init vs 첫 forward)만 환경에 따라 다르다.
   (XPU는 `xpu_fp8_mqa_logits`(`:864,:1075`), ROCm은 aiter로 플랫폼 분기 — **SM80 Triton 분기를 같은 자리에 추가**하는 것이 자연스러운 설계.)
 - top-k: `SparseIndexerTopkBackend = {auto, deep_select, cooperative, persistent, per_row, flashinfer, torch, aiter}`(`config/kernel.py:172-181`).
   `deep_select`는 SM100, `cooperative`는 SM90+(`indexer_topk.py:156-163`). **`torch` 백엔드는 capability 제약이 없어 SM80에서 top-k 자체는 가능**(성능은 P2 과제).
@@ -79,9 +80,12 @@ K3 핀(`9f62e4e9`, [k3-config.md](/home/jimmy/repos/k3-sm80/recon/k3-config.md))
   `fp8_ds_mla`(656 B 레이아웃)는 FlashMLA 전용이라 채택하지 않는다.
 
 ### B3. KV cache 기본값·레이아웃 — split 3/5 변화와 리포 software-FP8 패치의 충돌
-- `KimiK31ForConditionalGeneration`도 `KimiK3ForConditionalGenerationConfig`(`models/config.py:744,1565`)를 쓴다. split 3/5 설명: "with DSA, the kv-cache dtype defaults to per-tensor fp8 for FlashInfer sparse MLA"
-  + dense draft 설정(`configure_dense_draft`, `:805`). SM80에서는 이 기본값을 **bf16(P1) 또는 리포 software-FP8(P3)로 명시 override**해야 하고, packed hybrid block row 안에서
-  indexer K cache spec(`KimiK3IndexerCache`, entry 132 B)이 함께 배치되므로 `mla-fp8-kv-sm80.patch`(`mla.py`·`triton_mla.py`·`triton_decode_attention.py` 수정)는 **P3에서 sparse 백엔드 위에 재설계**한다.
+- `KimiK31ForConditionalGeneration`도 `KimiK3ForConditionalGenerationConfig`(`models/config.py:744,1565`)를 쓴다. 그 `verify_and_update_config`(`:775-805`)는 `dsa_config`가 있으면
+  kv-cache dtype을 **재작성**한다: 백엔드가 `FLASHINFER_MLA_SPARSE`이거나(미지정 + SM100)이면 `auto`→`fp8_e4m3`, **그 밖의 모든 경우(SM80 포함) `auto` 또는 `fp8*` → `fp8_ds_mla`**(FlashMLA sparse 전용 656 B 레이아웃).
+  `bfloat16`을 명시하면 건드리지 않는다. 리포 lane 01~03은 이미 `--kv-cache-dtype bfloat16`을 명시하므로 P1은 안전하지만, **lane 04/05의 `fp8`(software-FP8 패치 트리거)은 `fp8_ds_mla`로 바뀌어 패치와 충돌**한다 → P3에서 이 훅을 포함해 재설계.
+  speculative_config가 있으면 `configure_dense_draft`(`dense_draft.py`)가 draft 설정을 추가로 조정한다(P2 DSpark 때 검토).
+- lane이 명시하는 `--attention-backend TRITON_MLA`([cluster.py.tmpl](/home/jimmy/repos/k3-sm80/deploy/tooling/templates/cluster.py.tmpl) `:44`)는 K3.1에서 그대로 B2의 raise 원인이 된다 → 신규 SM80 sparse 백엔드 이름으로 교체(draft의 `attention_backend: TRITON_MLA`는 dense MLA라 유지).
+- packed hybrid block row 안에 indexer K cache spec(`KimiK3IndexerCache`, entry 132 B)이 함께 배치되므로 `mla-fp8-kv-sm80.patch`(`mla.py`·`triton_mla.py`·`triton_decode_attention.py` 수정)는 **P3에서 sparse 백엔드 위에 재설계**한다.
 
 ### B4. base pin 드리프트 (0498dc7e → main, 3.5개월) — 패치 4개의 운명
 
@@ -124,7 +128,7 @@ K3 핀(`9f62e4e9`, [k3-config.md](/home/jimmy/repos/k3-sm80/recon/k3-config.md))
 |---|---|---|---|---|
 | docker | [Dockerfile.openai](/home/jimmy/repos/k3-sm80/docker/Dockerfile.openai) `:11-12,:34-39,:88-95,:167,:182-183` · [Dockerfile.full](/home/jimmy/repos/k3-sm80/docker/Dockerfile.full) · [build-openai.sh](/home/jimmy/repos/k3-sm80/docker/build-openai.sh) `:6,:23` | `VLLM_COMMIT=0498dc7e…`, 패치 4개 적용, 태그 `k3-sm80-openai:0498dc7e-sm80-v3` | 새 pin(main 커밋), 패치 집합 {mxfp4-marlin(rebase)} + 신규 {sm80-dsa-indexer, triton-mla-sparse}; P3에 fp8-kv 재합류; 새 태그 | 값 교체 + 패치 교체 |
 | docker | `docker/patches/*.patch` | 4개 | §2 B4 표대로 퇴역/rebase/이연 + 신규 2개 | 신규 |
-| deploy | [render_lanes.py](/home/jimmy/repos/k3-sm80/deploy/tooling/render_lanes.py) `:48,:57-61,:93,:101,:118` · [lane_specs.py](/home/jimmy/repos/k3-sm80/deploy/tooling/lane_specs.py) · `deploy/0*/.env`·RUNBOOK·compose·Makefile(생성물) | `K3_TARGET_MODEL=moonshotai/Kimi-K3`, `K3_DRAFT_MODEL=Inferact/Kimi-K3-DSpark`, `K3_IMAGE`, `K3_SERVING_ROOT=…/Kimi-K3`, `VLLM_SERVED_MODEL_NAME=kimi-k3`, skip-layers `93 94 95 96 97`, `VLLM_ATTENTION_BACKEND=TRITON_MLA` | 모델·draft·이미지·루트 교체, `VLLM_ATTENTION_BACKEND`에 sparse 백엔드(또는 자동 선택) 추가, `VLLM_KV_CACHE_DTYPE` P1=auto(bf16), `reasoning_effort` smoke, `make render` 재생성 | 파라미터화(LaneSpec에 model 필드) |
+| deploy | [render_lanes.py](/home/jimmy/repos/k3-sm80/deploy/tooling/render_lanes.py) `:48,:57-61,:93,:101,:118` · [lane_specs.py](/home/jimmy/repos/k3-sm80/deploy/tooling/lane_specs.py) · `deploy/0*/.env`·RUNBOOK·compose·Makefile(생성물) | `K3_TARGET_MODEL=moonshotai/Kimi-K3`, `K3_DRAFT_MODEL=Inferact/Kimi-K3-DSpark`, `K3_IMAGE`, `K3_SERVING_ROOT=…/Kimi-K3`, `VLLM_SERVED_MODEL_NAME=kimi-k3`, skip-layers `93 94 95 96 97`, `VLLM_ATTENTION_BACKEND=TRITON_MLA` | 모델·draft·이미지·루트 교체, `VLLM_ATTENTION_BACKEND=TRITON_MLA` → 신규 SM80 sparse 백엔드 이름(dense로 두면 `mla_attention.py:642` raise), `VLLM_KV_CACHE_DTYPE=bfloat16` **명시 유지**(`auto` 금지 — §2 B3 재작성 훅), `--kernel-config`/`additional-config`로 `sparse_indexer_topk_backend=torch`, `reasoning_effort` smoke, `make render` 재생성 | 파라미터화(LaneSpec에 model 필드) |
 | deploy | [docs/A100-5LANE-RESULTS.md](/home/jimmy/repos/k3-sm80/docs/A100-5LANE-RESULTS.md) · [validate_lanes.py](/home/jimmy/repos/k3-sm80/deploy/tooling/validate_lanes.py) · [gates.py](/home/jimmy/repos/k3-sm80/deploy/tooling/gates.py) | gate 행 k08/c01/k10/k09 + lane01~05 | k11·k12 행 추가, lane 행을 K3.1 기준으로 | 신규 행 |
 | kernel-kit | [shapes.py](/home/jimmy/repos/k3-sm80/kernel-kit/common/shapes.py) `KERNEL_IDS`·`KERNEL_TITLES`·`REQUIRED_SHAPES`·`perf_bytes_model`·`_DECODE_CASES/_PREFILL_CASES` | K3 상수(MLA_LAYERS 24 등) | `DSA_INDEX_HEADS=32`, `DSA_INDEX_HEAD_DIM=128`, `DSA_TOPK=2048`, `DSA_INDEX_K_BYTES=132`, `DSA_LAYERS=24`(=MLA_LAYERS) + k11/k12 케이스·perf 모델 | 신규 상수·케이스 |
 | kernel-kit | `k11_dsa_indexer_sm80/harness.py`(신규) · `k12_mla_sparse_sm80/harness.py`(신규) · `common/dsa_ref.py`(fp32 참조: layernorm·logits·top-k·gather-attention) | — | 4게이트(NUMERIC/SANITIZER/SHAPES/PERF) 하네스; P1은 PERF **측정 전용** | 신규 |
@@ -142,7 +146,7 @@ K3 핀(`9f62e4e9`, [k3-config.md](/home/jimmy/repos/k3-sm80/recon/k3-config.md))
 | K3 회귀(k01~k08) | 새 pin에서 **A100 재실행 PASS** | c01·k10 포함 | k09 | — |
 | DSA indexer(k11) | Triton logits + `torch` top-k + software-FP8 index-K; NUMERIC/SANITIZER/SHAPES **PASS**, PERF 측정 전용 | PERF gate(루프라인 대비), Triton top-k | 1M prefill 버퍼 사이징 | mxfp4 index-K, DeepSelect |
 | sparse MLA(k12) | Triton decode+prefill, **bf16 latent**, 4게이트 중 PERF 측정 전용 | PERF gate, CUDA graph 캡처(enforce_eager 해제), batch>1 | software-FP8 latent 재설계(P3 fp8-kv) | fp8_ds_mla, DCP/ShardQ, HiSparse |
-| 서빙 lane | **lane 01 K3.1(TP8/PP4, 256k, bf16 KV, DSpark 없음)** `gates up gate-load gate-context smoke` RELAY | lane 02/03 K3.1(EP32, DSpark preview) | lane 04/05 K3.1(1M, software-FP8 KV+index-K) | specialized decode, P/D |
+| 서빙 lane | **lane 01 K3.1(TP8/PP4, 256k, `--kv-cache-dtype bfloat16` 명시, `--attention-backend <SM80 sparse>`, top-k `torch`, DSpark 없음)** `gates up gate-load gate-context smoke` RELAY | lane 02/03 K3.1(EP32, DSpark preview) | lane 04/05 K3.1(1M, software-FP8 KV+index-K) | specialized decode, P/D |
 | 렌더러·API | `reasoning_effort` smoke 1케이스, 파서 kimi_k3 | tool-call·multi-turn(reasoning_content 회신) smoke | — | vision |
 | 코스트 모델 | 변경 없음(판정 유지 근거 §3) | — | DSA 항 추가 + k11/k12 실측 재보정 | — |
 | 문서 | recon/k31-config.md, PLAN S2' 등록, README 현황 | RUNBOOK K3.1 | SUMMARY 재작성 | — |
@@ -163,6 +167,8 @@ K3 핀(`9f62e4e9`, [k3-config.md](/home/jimmy/repos/k3-sm80/recon/k3-config.md))
 ## 7. 미확인·리스크
 
 - Triton `tl.float8e4nv` 변환의 SM80 가용성 — software 비트 변환으로 우회하면 무관. A100 실측 전 가정.
+- DeepGEMM: vLLM wheel 동봉 사본 때문에 `has_deep_gemm()`이 참일 수 있어 증상이 "init 실패"가 아니라 "첫 forward 실패"로 나타날 수 있음 — 판정에는 영향 없음, 진단 시 혼동 주의.
+- lane 04/05의 `--kv-cache-dtype fp8`이 K3.1에서 `fp8_ds_mla`로 재작성되는 훅(§2 B3)과 리포 software-FP8 패치의 충돌 — P3 설계 항목.
 - `torch.ops._C.fused_kimi_k3_mla_*` CUDA op의 SM80 빌드·동작(§2 B4). 소스빌드 1회차에서 판정.
 - split 3/5의 packed hybrid block row와 리포 software-FP8 latent 레이아웃의 결합(P3).
 - indexer prefill 버퍼(`get_max_prefill_buffer_size`)의 1M 메모리(P3).
