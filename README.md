@@ -69,7 +69,7 @@ K3 이미지·lane(위 절차)은 그대로 두고, **최신 vLLM main 핀 `a3c1
 | 서빙 lane | `deploy/11-k31-tp8-pp4-256k-safe/` (`make -C … gates up gate-load gate-context smoke`) | TP8/PP4 · 256k · `--kv-cache-dtype bfloat16` 명시 · `--attention-backend TRITON_MLA_SPARSE` · DSpark 없음 · enforce_eager |
 | 증거 표 | `docs/A100-K31-RESULTS.md` | 전부 INCOMPLETE에서 시작 — 사내 1라운드 결과로만 PASS/FAIL 기입 |
 
-**정직한 상한**: 호스트에서는 핀 worktree 패치 적용·py_compile·AST·ruff·unittest·CPU dry-run·Triton 인터프리터 수치 대조·sm_80 PTX 컴파일까지만 확인했다.
+**정직한 상한**: 호스트에서는 핀 worktree 패치 적용·py_compile·AST·ruff·unittest·CPU dry-run·Triton 인터프리터 수치 대조·sm_80 PTX 컴파일, 그리고 **이미지 실빌드**(full 7,052 s → openai, `verify_k31_image.py` CPU 모드 17/17 PASS — `docker/GATE-RESULT-K31.md`)까지만 확인했다.
 GPU 실행(커널 4게이트, 서빙 smoke), 속도, 1M, DSpark, FP8 KV는 P1 범위 밖이거나 사내 A100 라운드에서 판정한다.
 
 ## 리포 지도
