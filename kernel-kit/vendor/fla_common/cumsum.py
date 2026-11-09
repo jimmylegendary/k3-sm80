@@ -1,4 +1,4 @@
-# vendored from vllm-project/vllm@0498dc7ea9204f1863b46515816f5d8d458e01e7 vllm/third_party/flash_linear_attention/ops/cumsum.py — Apache-2.0
+# vendored from vllm-project/vllm@a3c14efbc77c018e8bf579935095a87721349e05 vllm/third_party/flash_linear_attention/ops/cumsum.py — Apache-2.0
 # 변경점: 출처 헤더 + vllm.* import 상대화 재배선뿐(예외는 vendor/STUBS.md) — 본문 무수정.
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -39,12 +39,12 @@ def chunk_local_cumsum_scalar_kernel(
     IS_VARLEN: tl.constexpr,
     HEAD_FIRST: tl.constexpr,
 ):
-    i_t, i_bh = tl.program_id(0), tl.program_id(1)
+    i_t, i_bh = tl.program_id(0).to(tl.int64), tl.program_id(1)
     i_b, i_h = i_bh // H, i_bh % H
     if IS_VARLEN:
         i_n, i_t = (
             tl.load(chunk_indices + i_t * 2).to(tl.int32),
-            tl.load(chunk_indices + i_t * 2 + 1).to(tl.int32),
+            tl.load(chunk_indices + i_t * 2 + 1).to(tl.int64),
         )
         bos, eos = (
             tl.load(cu_seqlens + i_n).to(tl.int32),
@@ -54,23 +54,21 @@ def chunk_local_cumsum_scalar_kernel(
     else:
         bos, eos = i_b * T, i_b * T + T
 
+    o_t = i_t * BT + tl.arange(0, BT)
+    m_t = o_t < T
     if HEAD_FIRST:
-        p_s = tl.make_block_ptr(
-            s + bos * H + i_h * T, (T,), (1,), (i_t * BT,), (BT,), (0,)
-        )
-        p_o = tl.make_block_ptr(
-            o + bos * H + i_h * T, (T,), (1,), (i_t * BT,), (BT,), (0,)
-        )
+        p_s = s + bos * H + i_h * T + o_t
+        p_o = o + bos * H + i_h * T + o_t
     else:
-        p_s = tl.make_block_ptr(s + bos * H + i_h, (T,), (H,), (i_t * BT,), (BT,), (0,))
-        p_o = tl.make_block_ptr(o + bos * H + i_h, (T,), (H,), (i_t * BT,), (BT,), (0,))
+        p_s = s + bos * H + i_h + o_t * H
+        p_o = o + bos * H + i_h + o_t * H
     # [BT]
-    b_s = tl.load(p_s, boundary_check=(0,)).to(tl.float32)
+    b_s = tl.load(p_s, mask=m_t, other=0.0).to(tl.float32)
     b_o = tl.cumsum(b_s, axis=0)
     if REVERSE:
         b_z = tl.sum(b_s, axis=0)
         b_o = -b_o + b_z[None] + b_s
-    tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0,))
+    tl.store(p_o, b_o.to(p_o.dtype.element_ty), mask=m_t)
 
 
 @triton.heuristics({"IS_VARLEN": lambda args: args["cu_seqlens"] is not None})
@@ -98,12 +96,12 @@ def chunk_local_cumsum_vector_kernel(
     IS_VARLEN: tl.constexpr,
     HEAD_FIRST: tl.constexpr,
 ):
-    i_s, i_t, i_bh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
+    i_s, i_t, i_bh = tl.program_id(0), tl.program_id(1).to(tl.int64), tl.program_id(2)
     i_b, i_h = i_bh // H, i_bh % H
     if IS_VARLEN:
         i_n, i_t = (
             tl.load(chunk_indices + i_t * 2).to(tl.int32),
-            tl.load(chunk_indices + i_t * 2 + 1).to(tl.int32),
+            tl.load(chunk_indices + i_t * 2 + 1).to(tl.int64),
         )
         bos, eos = (
             tl.load(cu_seqlens + i_n).to(tl.int32),
@@ -119,44 +117,19 @@ def chunk_local_cumsum_vector_kernel(
     else:
         m_s = tl.where(o_i[:, None] >= o_i[None, :], 1.0, 0.0)
 
+    o_t = i_t * BT + tl.arange(0, BT)
+    o_s = i_s * BS + tl.arange(0, BS)
+    m_ts = (o_t[:, None] < T) & (o_s[None, :] < S)
     if HEAD_FIRST:
-        p_s = tl.make_block_ptr(
-            s + (bos * H + i_h * T) * S,
-            (T, S),
-            (S, 1),
-            (i_t * BT, i_s * BS),
-            (BT, BS),
-            (1, 0),
-        )
-        p_o = tl.make_block_ptr(
-            o + (bos * H + i_h * T) * S,
-            (T, S),
-            (S, 1),
-            (i_t * BT, i_s * BS),
-            (BT, BS),
-            (1, 0),
-        )
+        p_s = s + (bos * H + i_h * T) * S + o_t[:, None] * S + o_s[None, :]
+        p_o = o + (bos * H + i_h * T) * S + o_t[:, None] * S + o_s[None, :]
     else:
-        p_s = tl.make_block_ptr(
-            s + (bos * H + i_h) * S,
-            (T, S),
-            (H * S, 1),
-            (i_t * BT, i_s * BS),
-            (BT, BS),
-            (1, 0),
-        )
-        p_o = tl.make_block_ptr(
-            o + (bos * H + i_h) * S,
-            (T, S),
-            (H * S, 1),
-            (i_t * BT, i_s * BS),
-            (BT, BS),
-            (1, 0),
-        )
+        p_s = s + (bos * H + i_h) * S + o_t[:, None] * (H * S) + o_s[None, :]
+        p_o = o + (bos * H + i_h) * S + o_t[:, None] * (H * S) + o_s[None, :]
     # [BT, BS]
-    b_s = tl.load(p_s, boundary_check=(0, 1)).to(tl.float32)
+    b_s = tl.load(p_s, mask=m_ts, other=0.0).to(tl.float32)
     b_o = tl.dot(m_s, b_s, allow_tf32=False)
-    tl.store(p_o, b_o.to(p_o.dtype.element_ty), boundary_check=(0, 1))
+    tl.store(p_o, b_o.to(p_o.dtype.element_ty), mask=m_ts)
 
 
 def chunk_local_cumsum_scalar(

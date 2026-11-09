@@ -63,8 +63,7 @@ if _KIT not in sys.path:
 from common import env_check, report, shapes, timing, tolerance  # noqa: E402
 
 KID = "k05_marlin_moe_w4a16"
-PINS = {"vllm_main": "d223c900", "vllm_kimi_k3": "0498dc7e",
-        "hf": "moonshotai/Kimi-K3@9f62e4e9"}
+PINS = {"vllm_pin": "a3c14efb", "hf": "moonshotai/Kimi-K3@9f62e4e9"}
 
 # marlin.cuh@d223c900 L26/28/31 (namespace marlin_moe_wna16) — python 측 미러 상수
 MARLIN_MIN_THREAD_N = 64

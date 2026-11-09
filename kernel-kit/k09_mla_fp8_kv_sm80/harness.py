@@ -32,6 +32,7 @@ from common.fp8_ref import decode_e4m3fn  # noqa: E402
 
 KID = "k09_mla_fp8_kv_sm80"
 PINS = {
+    "vllm_pin": "a3c14efbc77c018e8bf579935095a87721349e05",
     "hf_kimi_k3": "9f62e4e9fffbd0a83ddd60e1c209d828994b3569",
     "storage": "software E4M3FN uint8",
     "compute": "BF16",

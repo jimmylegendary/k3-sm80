@@ -203,7 +203,7 @@ vLLM **병합된 main**에는 SM80 DSA 경로가 없지만(B1·B2), **open PR·R
 | 이미지 레시피 | `Dockerfile.k31-full`(CUDA 13.0.3·torch 2.14.0·**Ubuntu 24.04** — 핀 CMake가 g++≥13 요구) → `Dockerfile.k31-openai`(패치 3개, overlay 10파일 파생·검증 게이트) · `build-k31.sh`·`release-k31.sh`·`verify_k31_image.py`·`PULL-K31.md` · `run/11`·`run/21` | `docker build --check` 경고 0, `bash -n`, heredoc py_compile, overlay 로직 음성 테스트 4종, release/load 스크립트 stand-in e2e; **full base 빌드 2026-11-09 23:21 백그라운드 시작**(MAX_JOBS 6, 예상 2~3h+) |
 | kernel-kit | k01~k09 핀 재vendor(+쉼 5종), `vendor/dsa_ops`, `common/dsa_ref.py`·`dsa_gate.py`·`triton_interp.py`, `k11_dsa_indexer_sm80`·`k12_sparse_mla_sm80`(4게이트, `--interpret`), 등록(shapes·PERF_POLICY·TOL·run_all·relay `^k\d\d_`+≤12줄) | shapes/timing/report selftest·check_no_vllm 33파일·`run_all --cpu-dry-run` exit 0(INC=11, RELAY 10줄); venv kernel 테스트 112 OK; **인터프리터 k11 5/5(logits rmse_rel ≈9e-8, top-k 일치 1.0), k12 3/3(rmse_rel ≤2.0e-3)** — PASS 근거 아님 |
 | deploy | `LaneSpec` 모델 필드(K3 기본값) + 조건부 템플릿, lane `11-k31-tp8-pp4-256k-safe`, gate 행 k08/kda/k11/k12, `A100-K31-RESULTS.md`+`--evidence-k31` | `render_lanes --check drift=0`, **lane 01~05 35파일 SHA-256 스냅샷 불변**(구·신 도구 `diff -r` 동일), `validate_lanes errors=0`, compose config rc=0, dry-run argv 32 flag 핀 소스 대조 |
-| 통합 결함(리더 검출) | A. lane 11이 K3 전용 `verify_image.py`를 호출 → **수정 완료**(`image_verifier=docker/verify_k31_image.py`, 재렌더·테스트) · B. `vendor/dsa_ops`가 PR 원본이라 k11/k12가 배포 커널이 아닌 커널을 판정 → **패치본 재vendor + k12 큰 row id 케이스 + relay 비-KernelReport 무시**로 수정 중 | A: deploy 129 tests OK · B: 완료 후 §8에 기입 |
+| 통합 결함(리더 검출) | A. lane 11이 K3 전용 `verify_image.py`를 호출 → **수정 완료**(`image_verifier=docker/verify_k31_image.py`, 재렌더·테스트) · B. `vendor/dsa_ops`가 PR 원본이라 k11/k12가 배포 커널이 아닌 커널을 판정 → **수정 완료**(패치 본문에서 재생성 + 계약 테스트 25건, k12 `dec_b1_ctx160k_packed`(row id ≥ 3,728,270) REQUIRED 추가, relay/report가 `s2-kernel-report/v1`만 집계) | A: deploy 129 tests OK · B: 음성 대조 — **PR 원본·int64 제거 변종은 big 기하에서 SIGSEGV, 패치본 PASS**; 마스터 재실행 게이트 전부 통과(§8) |
 
 GPU 없이 못 한 것(사내 1라운드 판정): 실제 CUDA op(`indexer_k_quant_and_cache`·`per_token_group_quant_fp8`·`persistent_topk`) 호출, Triton autotune·CUDA graph, TP8×PP4 실체크포인트 로드·smoke, bf16 커널 정밀도(인터프리터는 fp16 치환·RNE 보정), 이미지 빌드 완료 여부.
 
@@ -242,6 +242,8 @@ GPU 없이 못 한 것(사내 1라운드 판정): 실제 CUDA op(`indexer_k_quan
 | A2 게이트 등록 | 완료 | 18지점 — 부록 B. `PERF_POLICY` 누락 시 스윕 exit 3, relay 필터 `k0` 버그 |
 
 **사내 검토 의견 대비**("K3에는 DSA가 없어서 k3 sm80 패치 4종 중 어느 것도 이 기능을 구현하지 않는다"): **사실로서 맞고 이 문서에 포함된다**(§B4 — 특히 `mla-fp8-kv-sm80.patch`는 K3.1 DSA 층이 쓰는 클래스조차 아니다). 그러나 그것만으로는 부족하다: ① 병합된 upstream main에도 SM80 DSA 경로가 없다(B1·B2) → 패치 밖에서 조달해야 하고 ② 그 조달은 신규 저작이 아니라 **미병합·A800 검증 PR #47629 rebase**가 기본안이며(§2.6) ③ DSA 밖에도 pin 상향(base 재빌드·의존성)·Marlin 패치 구조적 rebase·K3.1 전용 lane 분기(kv dtype 훅·draft 기본값)·kernel-kit 갱신이 필요하다(§0.5).
+
+**P1 구현 후 마스터 통합 게이트(2026-11-10)**: 보호 파일 무변경 · `python3 -m unittest discover -s tests -t .` OK(skip 41) · kernel-kit shapes/timing/report selftest PASS(mixed_dir 7항목 true) · `check_no_vllm` 34파일 green · `revendor_dsa_ops.py --check` 패치 본문 == 적용 트리 == vendored · `run_all --cpu-dry-run` exit 0(RELAY 10줄, `R!` 없음, INC=11) · venv tests/kernel OK · 인터프리터 k11 5/5·k12 4/4 PASS(evidence) · `render_lanes --check drift=0` · `validate_lanes --evidence-k31 errors=0`. base 이미지 빌드는 `[build 7/8]` nvcc 컴파일 진행 중(23:21 시작).
 
 초판 대비 정정: B1 메커니즘·패치 지점, B2 에러 순서·prefill 커널 불필요·k12 규모 L→M, "5분할"→6분할, `index_skip_topk_offset` 의미 부여 삭제, draft `kv_cache_dtype` 기본값 주입 추가, 게이트 이름 `k12_sparse_mla_sm80` 통일, pin 상향 규모 M→M~L.
 

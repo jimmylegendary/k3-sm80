@@ -2,4 +2,7 @@
 
 모듈: env_check(사전조건) · report(4게이트 스키마) · tolerance(bf16/fp32 비교 정책)
       · timing(CUDA event + Phase0 PERF 목표) · shapes(K3 실측 shape + 커버리지 계약)
+      · relay(화면 전달 요약, ≤12줄 압축 규칙)
+      · dsa_ref(K3.1 DSA fp32 오라클) · dsa_gate(k11/k12 child·sanitizer·게이트 조립)
+      · triton_interp(CPU Triton 인터프리터 보정 — k11/k12 --interpret 전용)
 """

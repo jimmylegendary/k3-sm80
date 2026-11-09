@@ -60,8 +60,7 @@ if _KIT not in sys.path:
 from common import env_check, report, shapes, timing, tolerance  # noqa: E402
 
 KID = "k06_dequant_bench"
-PINS = {"vllm_main": "d223c900", "vllm_kimi_k3": "0498dc7e",
-        "hf": "moonshotai/Kimi-K3@9f62e4e9"}
+PINS = {"vllm_pin": "a3c14efb", "hf": "moonshotai/Kimi-K3@9f62e4e9"}
 GROUP_SIZE = 128                    # W4A16 g128 (recon/k3-config.md §6, BPP_W4A16 근거)
 DQ_OPS_PRIOR = 4.0                  # phase0 현행 무근거 가정 (재보정 대상)
 

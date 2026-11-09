@@ -33,7 +33,7 @@ from common.mxfp4_ref import decode_e2m1, decode_e8m0  # noqa: E402
 
 KID = "k08_mxfp4_marlin_moe"
 PINS = {
-    "vllm_kimi_k3": "0498dc7ea9204f1863b46515816f5d8d458e01e7",
+    "vllm_pin": "a3c14efbc77c018e8bf579935095a87721349e05",
     "hf_kimi_k3": "9f62e4e9fffbd0a83ddd60e1c209d828994b3569",
     "marlin_fix": "vllm#36889 adapted to libtorch_stable",
 }

@@ -3,6 +3,8 @@
 원천(1차): recon/k3-config.md — HF moonshotai/Kimi-K3 @ 9f62e4e9fffbd0a83ddd60e1c209d828994b3569
            (config.json / modeling_kimi_linear.py / model.safetensors.index.json, 2026-07-28 확보)
 보조:      recon/kda-fla.md (KDA state 산정·gate_lower_bound), docs/PLAN.md §S2 (배치/ctx 대표점)
+DSA(k11/k12) 상수: recon/k31-config.md — HF moonshotai/Kimi-K3.1-Pro @ d9e99b0792a5e93b78ea9bea62a68167e36ddd9e
+           (config.json `text_config.dsa_config`, model.safetensors.index.json; 2026-11-09 확보)
 
 규칙: 이 파일의 모든 수치는 recon 문서와 1:1 대조 가능해야 한다(각 상수에 출처 주석).
       새 수치를 추측으로 추가하지 말 것 — recon에 없으면 recon부터 갱신한다.
@@ -65,6 +67,27 @@ MLA_NOPE = True              # §3 assert self.use_nope, rotary_emb=None
 MLA_FP8_PAGE_SIZE = 64       # lane 04/05 software E4M3FN cache page (token/page)
 
 # ---------------------------------------------------------------------------
+# 3b) DSA indexer / sparse MLA (recon/k31-config.md §2·§4 — K3.1-Pro `dsa_config`; K3 에는 없음)
+#     K3.1 의 Gated MLA 24층은 전부 Gated DSA 로 교체됐다(dense MLA 층 없음).
+# ---------------------------------------------------------------------------
+DSA_LAYERS = 24                  # §2 dsa_layers 24개 (= MLA_LAYERS — 아래 self_check 에서 assert)
+DSA_INDEX_HEADS = 32             # §2 index_num_heads
+DSA_INDEX_HEAD_DIM = 128         # §2 index_head_dim
+DSA_TOPK = 2048                  # §2 index_topk
+DSA_INDEX_ROPE_DIM = 0           # §2 index_rope_dim — indexer RoPE 없음(SM80 k11 커널은 RoPE 미구현이라 0 전제)
+DSA_INDEX_K_BYTES = 132          # §4 indexer K cache: 128 B E4M3 + 4 B fp32 scale (token/층)
+DSA_INDEX_SKIP_TOPK_OFFSET = 1   # §2 index_skip_topk_offset — vLLM 소비처 없음(parity 필드, 게이트에서 미사용)
+DSA_BLOCK_SIZE = 64              # indexer·MLA KV block (TRITON_MLA_SPARSE 백엔드 MultipleOf(64), 리뷰 §B2)
+DSA_HEADS_LOCAL = MLA_HEADS // 8  # 12 = 96 heads / TP8 (lane 01형 TP8/PP4) — sparse MLA 커널 q 헤드 수
+# 파생(recon 대조 대상 아님): sparse MLA 의 latent 행 오프셋 `row*576`(원소) 이 int32 를 넘는 첫 row id.
+# packed hybrid KV row 에서는 물리 row id 가 토큰 위치의 ~26.75배라 ~139k 토큰부터 이 한계를 넘는다.
+DSA_ROW_INT32_LIMIT = 2**31 // MLA_CACHE_D       # 3,728,270 (패치 test_row_ids_beyond_int32_offset 의 int32_row_limit)
+# K3.1 packed hybrid KV row 의 블록 stride(행 단위) = 64 × 26.75. 값은 패치(docker/patches-k31/
+# triton-mla-sparse-sm80.patch)의 `test_forward_mqa_kernel_reads_packed_kv_rows`(packed-row, W1)를 그대로 인용한 것이며
+# 이 킷에서 독립 재유도하지 않았다. k11 pool27x 는 같은 비율을 27배로 반올림한 값이다.
+DSA_PACKED_BLOCK_STRIDE_ROWS = 1712
+
+# ---------------------------------------------------------------------------
 # 4) 양자화/파라미터 (recon/k3-config.md §3·§4·§6)
 # ---------------------------------------------------------------------------
 EXPERT_P = 33_030_144        # §3 expert 1개 w1+w2+w3 = 3×3584×3072
@@ -107,6 +130,51 @@ MLA_FP8_REQUIRED_CASES = {
     },
 }
 
+# k11 DSA indexer logits (SM80 Triton MQA logits — 배포 패치본 mqa_logits_triton.py, 원천 PR #47629).
+# decode = paged `fp8_paged_mqa_logits_triton`(next_n=1, batch 1/8 × ctx 8k/128k/256k),
+# prefill = dense chunk `fp8_mqa_logits_triton`(m=256 query 행 × n 키; varlen 은 ks/ke 가 행마다 다름).
+# 각 커널의 첫 케이스가 perf_bytes_model 입력 키(mode,b,ctx,next_n)를 가져야 한다.
+DSA_INDEXER_REQUIRED_CASES = {
+    "dec_b1_ctx8k": dict(mode="decode", b=1, ctx=8192, next_n=1),
+    "dec_b8_ctx8k": dict(mode="decode", b=8, ctx=8192, next_n=1),
+    "dec_b1_ctx128k": dict(mode="decode", b=1, ctx=131072, next_n=1),
+    "dec_b8_ctx128k": dict(mode="decode", b=8, ctx=131072, next_n=1),
+    "dec_b1_ctx256k": dict(mode="decode", b=1, ctx=262144, next_n=1),
+    "dec_b8_ctx256k": dict(mode="decode", b=8, ctx=262144, next_n=1),
+    # K3.1 index-K 페이지는 packed hybrid KV row 안의 strided view — 블록 stride 를 27배로 벌린 풀(약 7.5 GB):
+    # 블록 오프셋이 2^31 B 를 넘는 구간(블록 ≥ ~9.4k)에서 int32 `block_idx*stride` 가 wrap 하지 않는지 본다.
+    "dec_b8_ctx256k_pool27x": dict(mode="decode", b=8, ctx=262144, next_n=1, pool_stride_x=27),
+    "pre_m256_n8k": dict(mode="prefill", m=256, n=8192),
+    "pre_m256_n128k": dict(mode="prefill", m=256, n=131072),
+    "pre_m256_n256k": dict(mode="prefill", m=256, n=262144),
+    "pre_varlen_m256_n8k": dict(mode="prefill", m=256, n=8192, varlen=True),
+}
+
+# k12 DSA sparse MLA (SM80 Triton split-KV — 배포 패치본 triton_mla_sparse_kernel.py, 원천 PR #47629).
+# q = (tokens, DSA_HEADS_LOCAL, 576) bf16, kv = 물리 latent 행 풀 (ctx 행), indices = top-k 2048 (물리 행, -1 = 무효).
+# decode = 질의 토큰 b개(1/8) × ctx 8k/128k/256k, prefill = 질의 토큰 t=256 개(배치 말미 청크),
+# pre_short_t64 = 유효 인덱스가 64 이하라 top-k 2048 중 대부분이 -1 sentinel 인 짧은 프리필(PR 회귀 테스트와 동형).
+# dec_b1_ctx160k_packed = packed hybrid KV row 흉내(k11 pool27x 와 같은 취지): 블록 시작 row 를 `block_stride_rows`(1712)
+#   간격으로 벌린 풀 + 물리 row id 가 DSA_ROW_INT32_LIMIT(3,728,270)를 넘는 구간(블록 ≥ 2178 ≈ 139k 토큰 이후)의 선택 행.
+#   int32 `row*576` 이 wrap 하는 PR 원본 커널은 여기서 잘못된 주소를 읽는다(배포 패치본은 int64 승격).
+#   GPU 메모리(bf16 풀 = 행 수 × 576 × 2 B, 상세 산식은 harness.packed_geometry): ctx 163,840 -> 2,560 블록 + 미사용 2 = 2,562 블록
+#   × 1,712 행 = 4,386,144 행 = 5.05 GB(4.71 GiB); 작업 버퍼(사용 행 난수 0.19 GB + randn 청크 0.40 GB + 오라클·q·인덱스 등 < 0.02 GB)
+#   포함 추정 5.66 GB(5.27 GiB) — 목표 7~8 GB 이내(리포트 evidence.packed_pool 에 기록). 블록 ≥ 2178(= 139,392 토큰 이후)이 전체의 15% 라
+#   top-k 2048 중 평균 ≈ 300 행이 int32 한계 너머다(CPU 인터프리터 실측 308행; 선택 행이 0 이면 케이스가 FAIL — 공회전 방지).
+SPARSE_MLA_REQUIRED_CASES = {
+    "dec_b1_ctx8k": dict(mode="decode", b=1, ctx=8192),
+    "dec_b8_ctx8k": dict(mode="decode", b=8, ctx=8192),
+    "dec_b1_ctx128k": dict(mode="decode", b=1, ctx=131072),
+    "dec_b8_ctx128k": dict(mode="decode", b=8, ctx=131072),
+    "dec_b1_ctx256k": dict(mode="decode", b=1, ctx=262144),
+    "dec_b8_ctx256k": dict(mode="decode", b=8, ctx=262144),
+    "dec_b1_ctx160k_packed": dict(mode="decode", b=1, ctx=163840, block_stride_rows=DSA_PACKED_BLOCK_STRIDE_ROWS),
+    "pre_t256_ctx8k": dict(mode="prefill", t=256, ctx=8192),
+    "pre_t256_ctx128k": dict(mode="prefill", t=256, ctx=131072),
+    "pre_t256_ctx256k": dict(mode="prefill", t=256, ctx=262144),
+    "pre_short_t64": dict(mode="prefill", t=64, ctx=64, short=True),
+}
+
 # ---------------------------------------------------------------------------
 # 5) S2 테스트 매트릭스 (docs/PLAN.md §S2 완료판정 3: 배치 1/8/32, ctx 8k/128k 대표점)
 # ---------------------------------------------------------------------------
@@ -123,6 +191,8 @@ KERNEL_IDS = (
     "k07_situ_act",          # SiTU 언퓨즈드 참조 (성능 후순위)
     "k08_mxfp4_marlin_moe",  # 원본 MXFP4 checkpoint → Marlin MoE SM80
     "k09_mla_fp8_kv_sm80",   # uint8 E4M3FN software MLA KV cache
+    "k11_dsa_indexer_sm80",  # K3.1 DSA indexer MQA logits (SM80 Triton, 배포 패치본 = PR #47629 + int64)
+    "k12_sparse_mla_sm80",   # K3.1 sparse MLA (SM80 Triton split-KV, 배포 패치본 = PR #47629 + int64 + workspace 주입)
 )
 
 KERNEL_TITLES = {
@@ -135,6 +205,8 @@ KERNEL_TITLES = {
     "k07_situ_act": "SiTU-GLU 언퓨즈드 참조 activation",
     "k08_mxfp4_marlin_moe": "Original MXFP4 Marlin MoE (TP8/EP32 SM80 gate)",
     "k09_mla_fp8_kv_sm80": "Software E4M3FN MLA KV cache (SM80 byte storage)",
+    "k11_dsa_indexer_sm80": "DSA indexer MQA logits (K3.1, SM80 Triton paged decode + prefill)",
+    "k12_sparse_mla_sm80": "Sparse MLA top-2048 attention (K3.1, SM80 Triton split-KV)",
 }
 
 # SHAPES 게이트 요구 커버리지: 케이스 이름 → 케이스 파라미터.
@@ -203,6 +275,8 @@ REQUIRED_SHAPES = {
         "prefill": dict(m=8192, k=LATENT, n=MOE_INTER, e=N_EXPERTS, topk=TOPK),
     },
     "k09_mla_fp8_kv_sm80": dict(MLA_FP8_REQUIRED_CASES),
+    "k11_dsa_indexer_sm80": dict(DSA_INDEXER_REQUIRED_CASES),
+    "k12_sparse_mla_sm80": dict(SPARSE_MLA_REQUIRED_CASES),
 }
 
 
@@ -322,6 +396,35 @@ def perf_bytes_model(kernel_id: str, **case) -> dict:
             alu_ops=values * 12.0,
             note="software E4M3FN round-trip: BF16↔uint8, native FP8 연산 없음",
         )
+    elif kernel_id == "k11_dsa_indexer_sm80":
+        H, D = DSA_INDEX_HEADS, DSA_INDEX_HEAD_DIM
+        if case.get("mode", "decode") == "prefill":
+            rows, keys = case["m"], case["n"]
+            # 호출 단위 모델(wrapper 포함): fp8→bf16 pre-decode(K n×D×(1+2) B, q rows×H×D×(1+2) B),
+            # 커널 K bf16 읽기(n×D×2 B, 같은 n 타일을 읽는 행 program 은 L2 공유라 HBM 1회로 계상) + 스케일,
+            # q bf16 읽기, 가중치 fp32, logits fp32 쓰기.
+            io = (keys * D * (1 + 2) + keys * D * 2 + keys * 4
+                  + rows * H * D * (1 + 2 + 2) + rows * H * 4 + rows * keys * 4)
+            out.update(bytes=io, macs=rows * keys * H * D,
+                       note="prefill: pre-decode + K bf16 스트림 + logits fp32 쓰기 지배 (호출 단위, 루프라인 하한)")
+        else:
+            nn = b * case.get("next_n", 1)
+            # index-K 132 B/tok/층 스트림(128 B E4M3 + 4 B fp32 scale) + q(fp8)·가중치(fp32) 읽기
+            # + logits fp32 쓰기 + top-k int32 쓰기(top-k 커널 몫이지만 지시에 따라 계상)
+            io = (b * ctx * DSA_INDEX_K_BYTES + nn * (H * D + H * 4)
+                  + nn * ctx * 4 + nn * DSA_TOPK * 4)
+            out.update(bytes=io, macs=nn * ctx * H * D,
+                       note="decode: index-K 132 B/tok/층 스트림 지배 (+q·logits·top-k 쓰기), recon/k31-config §4")
+    elif kernel_id == "k12_sparse_mla_sm80":
+        tok = case.get("t", b)
+        hq = DSA_HEADS_LOCAL
+        gather = tok * DSA_TOPK * MLA_CACHE_D * 2      # 선택 2048행 × 576 × bf16 (V 는 앞 512 lane 재사용)
+        q_io = tok * hq * MLA_CACHE_D * 2              # q 읽기
+        o_io = tok * hq * MLA_KV_LORA * 2              # o 쓰기
+        idx = tok * DSA_TOPK * 4                       # int32 인덱스 읽기
+        macs = tok * hq * DSA_TOPK * (MLA_CACHE_D + MLA_KV_LORA)   # QK(576) + PV(512)
+        out.update(bytes=gather + q_io + o_io + idx, macs=macs,
+                   note="gather 2048×576×2B/토큰 지배 + q/o + 인덱스 (K/V 공유 latent, heads_local=12@TP8)")
     else:
         raise KeyError(f"미등록 커널 id: {kernel_id}")
     return out
@@ -356,6 +459,15 @@ _CROSSCHECK = [
     ("KDA_STATE_BYTES_LAYER_SEQ", KDA_STATE_BYTES_LAYER_SEQ, "kda-fla §3 96×128×128×fp32", 6_291_456),
     ("BPP_MXFP4", BPP_MXFP4, "k3-config §6 MXFP4 B/param", 0.53125),
     ("BPP_W4A16", BPP_W4A16, "k3-config §6 INT4 g128 B/param", 0.515625),
+    # --- K3.1 DSA (recon/k31-config.md) ---
+    ("DSA_LAYERS", DSA_LAYERS, "k31-config §2 dsa_layers 24개", 24),
+    ("DSA_INDEX_HEADS", DSA_INDEX_HEADS, "k31-config §2 index_num_heads", 32),
+    ("DSA_INDEX_HEAD_DIM", DSA_INDEX_HEAD_DIM, "k31-config §2 index_head_dim", 128),
+    ("DSA_TOPK", DSA_TOPK, "k31-config §2 index_topk", 2048),
+    ("DSA_INDEX_ROPE_DIM", DSA_INDEX_ROPE_DIM, "k31-config §2 index_rope_dim", 0),
+    ("DSA_INDEX_K_BYTES", DSA_INDEX_K_BYTES, "k31-config §4 indexer K 132 B/tok/층", 132),
+    ("DSA_INDEX_SKIP_TOPK_OFFSET", DSA_INDEX_SKIP_TOPK_OFFSET,
+     "k31-config §2 index_skip_topk_offset", 1),
 ]
 
 
@@ -368,6 +480,13 @@ def self_check(verbose: bool = True) -> bool:
     assert KDA_STATE_BYTES_LAYER_SEQ == KDA_HEADS * KDA_HEAD_DIM * KDA_HEAD_DIM * 4
     assert N_LAYERS == KDA_LAYERS + MLA_LAYERS
     assert N_LAYERS == MOE_LAYERS + DENSE_LAYERS
+    # K3.1: Gated MLA 24층이 전부 DSA 로 교체 — dense MLA 층이 남지 않는다 (recon/k31-config §2)
+    assert DSA_LAYERS == MLA_LAYERS
+    assert DSA_INDEX_K_BYTES == DSA_INDEX_HEAD_DIM + 4        # 128 B E4M3 + 4 B fp32 scale
+    assert DSA_TOPK % 16 == 0                                  # sparse 커널 최소 BLOCK_N(16) 나눗셈 요구
+    assert MLA_HEADS % 8 == 0 and DSA_HEADS_LOCAL * 8 == MLA_HEADS
+    assert DSA_ROW_INT32_LIMIT == 3_728_270 and DSA_ROW_INT32_LIMIT * MLA_CACHE_D < 2**31 <= (DSA_ROW_INT32_LIMIT + 1) * MLA_CACHE_D
+    assert DSA_PACKED_BLOCK_STRIDE_ROWS > DSA_BLOCK_SIZE          # 블록 사이에 다른 그룹의 페이지가 낀다
     ok = True
     rows = []
     for name, val, src, expect in _CROSSCHECK:

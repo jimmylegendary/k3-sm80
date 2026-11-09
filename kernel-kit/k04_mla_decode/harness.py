@@ -1,16 +1,19 @@
 """k04_mla_decode — vLLM TRITON_MLA 디코드 커널 단독 검증 하네스 (S2).
 
-대상 커널 (핀 확정, 2026-07-28 raw fetch로 원문 대조):
+대상 커널 (핀 a3c14efbc77c018e8bf579935095a87721349e05 = vLLM main 2026-11-09, 원문 대조):
   vllm.v1.attention.ops.triton_decode_attention.decode_attention_fwd
-  - vLLM main `d223c900` 과 kimi-k3 브랜치 `0498dc7e` 에서 **바이트 동일**
-    (md5 de7ec6c04696f595bd79e83ce0943206, sha256 아래 PINNED_KERNEL_SHA256).
-  - 호출부(vllm/v1/attention/backends/mla/triton_mla.py)는 브랜치에 DSpark(비인과
-    draft) 분기만 추가 — causal decode 경로(우리 대상)는 main 과 동일.
+  - 이전 핀 0498dc7e(818줄) → 1575줄: `sliding_window` 인자(기본 None → 0 = 무창, 기존 causal
+    decode 의미)와 folded causal verify 커널군(`decode_attention_fwd_verify`…)이 추가됐다.
+    우리 대상(causal decode, `decode_attention_fwd(…, is_mla=True)`)의 위치 인자 순서는 불변 —
+    신규 인자는 전부 뒤쪽 기본값이라 이 하네스 호출은 무수정으로 유효. sha256 은 아래 상수.
+  - 호출부(vllm/v1/attention/backends/mla/triton_mla.py)는 핀에서 `_compute_num_kv_splits`
+    (L47-54, 512 tok/split·2^n·SM×2 상한 — 아래 `_num_kv_splits` 와 동일 산식)를 공유 함수로 빼고
+    `layer._k_scale` 을 항상 넘긴다(bf16 KV 에서는 1.0 텐서 = 우리 기본값과 동치).
   - import 는 **vendor 우선**(kernel-kit/vendor/attn_ops/triton_decode_attention.py —
     동일 핀 vendored 사본, vLLM 설치 불필요; sha 는 VENDORED_KERNEL_SHA256 로 별도 핀)
     → 실패 시 vllm 폴백. 출처는 evidence.kernel.source.
 
-vLLM 결합 방식 (triton_mla.py `TritonMLAImpl.forward_mqa` L217-286 @ d223c900 1:1 재현):
+vLLM 결합 방식 (triton_mla.py `TritonMLAImpl.forward_mqa` L271-376 @ a3c14efb 1:1 재현):
   q            (B, 96, 576)  bf16   = absorbed q: [q_nope@W_UK (512) ‖ q_pe (64)]
   k_buffer     (P, page, 1, 576) bf16 = kv_c_and_k_pe_cache.unsqueeze(2)  [latent 512+rope 64]
   v_buffer     = k_buffer[..., :512] (view; is_mla → v = trans(k) 공유)
@@ -19,14 +22,14 @@ vLLM 결합 방식 (triton_mla.py `TritonMLAImpl.forward_mqa` L217-286 @ d223c90
   attn_logits  (B, 96, num_kv_splits, 513) fp32   [+1 = split별 LSE]
   num_kv_splits = min(next_pow2(max(1, max_seq_len//512)), sm_count*2)  [L41-47 재현]
   sm_scale     = qk_head_dim^-0.5 = 192^-0.5
-    근거: kimi-k3 `0498dc7e` vllm/models/kimi_k3/nvidia/mla.py L127 (qk_head_dim=128+64),
-    L134 (`self.scale = self.qk_head_dim**-0.5`; mscale 은 rope_parameters 있을 때만 —
-    K3는 NoPE(mla_use_nope, recon/k3-config.md §3)라 미적용), L287/L314 로 impl 전달.
+    근거: a3c14efb vllm/models/kimi_k3/nvidia/mla.py L156 (qk_head_dim=128+64),
+    L164 (`self.scale = self.qk_head_dim**-0.5`; mscale 은 rope_parameters 있을 때만 —
+    K3는 NoPE(mla_use_nope, recon/k3-config.md §3)라 미적용), L348/L402 로 impl 전달.
   is_mla=True → grouped 커널: Lk=576 → BLOCK_DMODEL=512 + BLOCK_DPE=64 경로
-    (triton_decode_attention.py L491-497, kv_group_num = 96/1 = 96).
+    (kv_group_num = 96/1 = 96; 줄 번호는 이전 핀 L491-497 기준 — 핀 a3c14efb 에서 이동).
 
 KV dtype arm 판정 — bf16 단일 arm:
-  triton_mla.py L187-198: SM80에서 fp8 KV 는 __init__ 즉시 ValueError
+  triton_mla.py L225-236 (@a3c14efb): SM80에서 fp8 KV 는 __init__ 즉시 ValueError
   ("native FP8 (fp8e4nv) requires SM89+") → A100 에는 fp8 arm 이 존재하지 않는다.
   "fp8 저장 경로가 기본이면 두 arm" 조건 자체가 SM80 에서 거짓 (bf16 이 유일 경로).
   tolerance.py k04 정책("S2는 bf16 KV만 다룬다")과 일치. evidence 에 전사.
@@ -83,19 +86,19 @@ D_V = shapes.MLA_KV_LORA        # 512
 SCALE = (shapes.MLA_QK_NOPE + shapes.MLA_QK_ROPE) ** -0.5   # 192^-0.5 (k3 mla.py L134)
 PAGE_SIZE = 64                  # TRITON_MLA 요구 16 배수 (triton_mla.py supports_block_size)
 
-PINS = {"vllm_main": "d223c900", "vllm_kimi_k3": "0498dc7e", "hf_kimi_k3": "9f62e4e9"}
-# 핀 커밋의 vllm/v1/attention/ops/triton_decode_attention.py (main=branch 동일 파일)
-PINNED_KERNEL_SHA256 = "b9823c65eba22d76abf64dad7d7d16a950f67471c86d6cb5b3e983aaf14381ac"
+PINS = {"vllm_pin": "a3c14efb", "hf_kimi_k3": "9f62e4e9"}
+# 핀 a3c14efb 의 vllm/v1/attention/ops/triton_decode_attention.py (`git show <pin>:<path> | sha256sum`)
+PINNED_KERNEL_SHA256 = "4ce0db08ddf0c978485c9b6f967d5a9221a3bdf61159d956773d3c26ea815300"
 # vendor 사본 sha (= 핀 원본 + 출처 헤더 2줄 + import 2행 상대화 — vendor/STUBS.md).
 # 원본 계보는 위 PINNED_ 로, vendor 사본 드리프트는 이 값으로 각각 감시한다.
-VENDORED_KERNEL_SHA256 = "2ab9887c2d42a5674da1724c07d18ab2c0a6c97aeb80c4af5cb30e4cf30ef1de"
+VENDORED_KERNEL_SHA256 = "6053f265f348b4ee17c5925f84599a8e93722119b1bdb33c1d06569f183118de"
 
 # PERF 판정 제외 임계 (사전등록): roofline < 30µs 면 launch 고정비 지배 → evidence 만
 PERF_JUDGE_MIN_ROOFLINE_US = 30.0
 
 FP8_ARM_NOTE = (
     "fp8 KV arm 미실행 — SM80에서 TRITON_MLA는 fp8 KV를 __init__에서 즉시 거부 "
-    "(vllm@d223c900 triton_mla.py L187-198: 'native FP8 (fp8e4nv) requires SM89+'). "
+    "(vllm@a3c14efb triton_mla.py L225-236: 'native FP8 (fp8e4nv) requires SM89+'). "
     "A100 경로는 bf16 KV 단일 arm이 유일하며 K3 기본 kv-cache-dtype=auto(bf16). "
     "fp8 대조 바(upstream test atol=5e-1)는 SM89+ 전용 — S2 범위 밖."
 )
@@ -106,7 +109,7 @@ def _cdiv(a: int, b: int) -> int:
 
 
 def _num_kv_splits(max_seq_len: int, sm_count: int) -> int:
-    """triton_mla.py L37-47 재현: 512 tok/split, 2^n, SM×2 상한."""
+    """triton_mla.py _compute_num_kv_splits (L47-54, @a3c14efb) 재현: 512 tok/split, 2^n, SM×2 상한."""
     ideal = 1 << max(0, (max(1, max_seq_len // 512) - 1)).bit_length()
     return min(ideal, sm_count * 2)
 
@@ -260,15 +263,15 @@ def run_gpu(args, rep: report.KernelReport) -> int:
     rep.add_evidence("kernel", kmeta)
     rep.add_evidence("fp8_kv_arm", FP8_ARM_NOTE)
     rep.add_evidence("call_contract", {
-        "scale": SCALE, "scale_basis": "qk_head_dim(192)^-0.5 — k3 mla.py@0498dc7e L127/L134 (NoPE→mscale 없음)",
+        "scale": SCALE, "scale_basis": "qk_head_dim(192)^-0.5 — k3 mla.py@a3c14efb L156/L164 (NoPE→mscale 없음)",
         "page_size": PAGE_SIZE, "is_mla": True, "kv_dtype": "bfloat16",
-        "num_kv_splits_rule": "min(next_pow2(max(1, max_seq_len//512)), sm_count*2) — triton_mla.py L37-47",
+        "num_kv_splits_rule": "min(next_pow2(max(1, max_seq_len//512)), sm_count*2) — triton_mla.py _compute_num_kv_splits L47-54",
     })
     if not kmeta["matches_pin"]:
         rep.add_evidence("kernel_pin_warning",
                          f"[source={kmeta['source']}] 커널 파일 sha256 이 핀과 다름 "
                          "(vendor→VENDORED_KERNEL_SHA256, vllm→PINNED_KERNEL_SHA256 "
-                         "d223c900=0498dc7e 동일본) — 판정은 유효하되 드리프트를 기록")
+                         "= 핀 a3c14efb 원본) — 판정은 유효하되 드리프트를 기록")
 
     sm_count = torch.cuda.get_device_properties(0).multi_processor_count
 

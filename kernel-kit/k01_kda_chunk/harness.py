@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """k01_kda_chunk — KDA chunk prefill (chunk_kda_with_fused_gate, 순수 Triton) 단독 검증.
 
-대상 API (vLLM kimi-k3 @ 0498dc7ea9204f1863b46515816f5d8d458e01e7 원문 확인):
+대상 API (vLLM main @ a3c14efbc77c018e8bf579935095a87721349e05 원문 확인 — 이전 핀 0498dc7e 에서 재vendor):
   vllm.models.kimi_k3.nvidia.ops.third_party.kda.chunk_kda_with_fused_gate(
       q, k, v, raw_g, raw_beta, A_log, g_bias, lower_bound,
       initial_state, output_final_state, use_qk_l2norm_in_kernel, cu_seqlens)
   — SM80 prefill 프로덕션 경로 (nvidia/kda.py L639-652: flashkda 미지원 아치의 폴백).
   import 는 **vendor 우선**(kernel-kit/vendor/fla_kda — 동일 핀 vendored 사본,
   vLLM 설치 불필요·torch+triton 만) → 실패 시 vllm 폴백. 출처는 evidence.kernel_import.
-  주의: 커널은 출력 o를 **v 버퍼에 in-place로 기록**한다(chunk.py `o=v`) → v는 clone 전달.
+  주의: 커널은 출력 o를 **v 버퍼에 in-place로 기록**한다(chunk.py `o=v if out is None else out`) → v는 clone 전달.
+  핀 a3c14efb 변경점(vendor 재생성): KDA 인덱싱이 `make_block_ptr`→포인터 연산으로 재작성되고
+  i_t 가 program_id 에서 int64 로 승격(chunk.py), chunk_delta_h.py 의 cast-before-multiply 수정이
+  upstream 에 반영됐다 → 이전 vendor 사본이 들고 있던 SM80-FIX P1/P2(kda-sm80-int64) 인라인 패치는
+  **퇴역**했고 vendor 사본은 패치 없는 원본이다. 퇴역 확정은 long-T 케이스(`b1_T128k`, 131,072 tok ≥
+  INT32_OVERFLOW_MIN_TOKENS) NUMERIC PASS 로만 한다 — evidence.int64_retirement_probe 에 기록.
   initial/final state 레이아웃 = (N, H, V, K) — naive 참조 (K,V)의 전치 (test_kda.py L177-192).
 
 판정 (docs/PLAN.md §S2 4게이트):
@@ -40,8 +45,7 @@ if _KIT not in sys.path:
 from common import env_check, kda_ref, report, shapes, timing, tolerance  # noqa: E402
 
 KID = "k01_kda_chunk"
-PINS = {"vllm_kimi_k3": "0498dc7e", "vllm_main": "d223c900",
-        "hf": "moonshotai/Kimi-K3@9f62e4e9"}
+PINS = {"vllm_pin": "a3c14efb", "hf": "moonshotai/Kimi-K3@9f62e4e9"}
 
 
 def import_kda_ops():
@@ -53,7 +57,7 @@ def import_kda_ops():
     try:
         from vendor import fla_kda as m  # kernel-kit/vendor (sys.path=_KIT)
         return m, {"source": "vendor", "module_file": m.__file__,
-                   "pin": PINS["vllm_kimi_k3"]}
+                   "pin": PINS["vllm_pin"]}
     except Exception as e_v:
         try:
             import vllm.models.kimi_k3.nvidia.ops.third_party.kda as m
@@ -66,6 +70,11 @@ def import_kda_ops():
 H, D = shapes.KDA_HEADS, shapes.KDA_HEAD_DIM          # 96, 128 (K3 실측)
 LB = shapes.KDA_GATE_LOWER_BOUND                       # -5.0 (K3 config)
 PERF_CASE = "b1_T8k"                                   # PERF 대표(단일 seq 8k prefill)
+# int64 퇴역 확정용 long-T 케이스. h 버퍼 오프셋 (i_tg*H + i_h)*K*V (K=V=128, H=96) 가 int32 에서
+# wrap 하는 첫 청크 = i_tg ≥ 1366 (1366*96*16384 ≥ 2^31 — 전 head 에서 발화) → 청크 크기 64 기준
+# 토큰 위치 1366*64 = 87,424. 이 위치를 넘는 T 를 가진 케이스가 REQUIRED_SHAPES 에 있어야 한다.
+LONG_T_CASE = "b1_T128k"
+INT32_OVERFLOW_MIN_TOKENS = 87_424
 
 # 케이스 → varlen 길이 목록 (합 = b×T; 64 비배수 ragged 로 청크 경계 검증)
 CASE_LENGTHS = {
@@ -219,6 +228,14 @@ def gpu_run(r: report.KernelReport, a) -> None:
                                  "에도 없음 — recon/kda-fla.md §5.3 int32 리스크는 상한 케이스 "
                                  "b1_T128k 로 감시(사전등록; 구 b32_T8k 262k tok 는 OOM 확정 "
                                  "→ b32_T2k 교체, VERIFICATION.md #2)"})
+    probe = [x for x in results if str(x.metrics.get("case", "")).startswith(LONG_T_CASE)]
+    r.add_evidence("int64_retirement_probe", {
+        "what": "핀 a3c14efb 는 kda-sm80-int64 패치를 upstream 에 포함 — vendor 사본은 패치 없는 원본",
+        "case": LONG_T_CASE, "tokens": sum(CASE_LENGTHS[LONG_T_CASE]),
+        "int32_overflow_min_tokens": INT32_OVERFLOW_MIN_TOKENS,
+        "observed_cases": [x.metrics.get("case") for x in probe],
+        "all_passed": bool(probe) and all(x.passed for x in probe),
+        "rule": "all_passed=true → 패치 퇴역 확정 / 크래시·IMA·NUMERIC FAIL → 패치 복원 필요 (docker/patches)"})
     r.set_gate("NUMERIC", *tolerance.numeric_gate(KID, results))
     r.set_gate("SHAPES", *shapes.shapes_gate(KID, covered))
     run_sanitizer_gate(r)

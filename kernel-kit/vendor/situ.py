@@ -1,5 +1,6 @@
-# vendored(발췌) from vllm-project/vllm@0498dc7ea9204f1863b46515816f5d8d458e01e7
-#   vllm/model_executor/layers/activation.py L183-190 SituAndMul.forward_native — Apache-2.0
+# vendored(발췌) from vllm-project/vllm@a3c14efbc77c018e8bf579935095a87721349e05
+#   vllm/model_executor/layers/activation.py L184-191 SituAndMul.forward_native — Apache-2.0
+#   (핀 재대조: 0498dc7e L183-190 과 본문 동일 — 줄 번호만 +1)
 # 발췌 사유: 원본 activation.py 는 CustomOp/distributed/platform 인프라를 eager import
 # 하는 레이어 파일 — SM80 배포 경로(forward_native, 순수 torch)만 함수로 추출.
 # 수식은 원문 그대로 (변수명 포함). 퓨즈드 CUDA op(_C.situ_and_mul)는 C-확장이라

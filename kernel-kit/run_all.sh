@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# S2 kernel-kit 러너 — k01..k07 순차 실행 + kernel-report/ 집계 + tar 반출.
+# S2 kernel-kit 러너 — k01..k09 + k11·k12 순차 실행 + kernel-report/ 집계 + tar 반출.
 #
 # 사용:
 #   bash run_all.sh                  # GPU 모드 (A100 노드; 사전조건 미충족 시 명확히 skip)
@@ -13,7 +13,7 @@ set -uo pipefail
 KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPORT_DIR="${KERNEL_REPORT_DIR:-$KIT_DIR/kernel-report}"
 VERDICT="${PHASE0_VERDICT:-$KIT_DIR/../phase0/verdict.json}"
-KERNELS_DEFAULT="k01_kda_chunk k02_kda_recurrent k03_causal_conv1d k04_mla_decode k05_marlin_moe_w4a16 k06_dequant_bench k07_situ_act k08_mxfp4_marlin_moe k09_mla_fp8_kv_sm80"
+KERNELS_DEFAULT="k01_kda_chunk k02_kda_recurrent k03_causal_conv1d k04_mla_decode k05_marlin_moe_w4a16 k06_dequant_bench k07_situ_act k08_mxfp4_marlin_moe k09_mla_fp8_kv_sm80 k11_dsa_indexer_sm80 k12_sparse_mla_sm80"
 KERNELS="${KERNELS:-$KERNELS_DEFAULT}"
 
 DRY=""

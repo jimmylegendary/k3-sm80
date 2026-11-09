@@ -81,6 +81,24 @@ TOL: dict[str, TolPolicy] = {
         basis="MXFP4 E2M1+E8M0 logical dequant FP32 reference vs Marlin BF16 output. "
               "vLLM test_marlin_gemm.py@d223c900의 compute_max_diff<0.04와 "
               "test_moe.py atol=4e-2/rtol=0을 동일 적용."),
+    "k11_dsa_indexer_sm80": TolPolicy(
+        rmse_rel=1e-4, max_abs=1e-3,
+        basis="indexer logits(fp32) vs fp32 oracle — **동일 양자화 입력**(E4M3 q/k 바이트+ue8m0 스케일)을 "
+              "커널과 오라클이 공유하므로 양자화 오차는 비교에 안 들어간다. 하네스가 유효 구간만 "
+              "rms(ref)로 정규화해 비교(스케일 무관 바). E4M3 값은 bf16 에 정확히 표현되어 LUT/pre-decode "
+              "가 무손실이고 tl.dot(bf16→fp32 acc)의 편차는 fp32 합산 순서뿐(~1e-6) — 1e-4/1e-3 은 그 "
+              "~100배 여유라 이보다 큰 편차는 디코드/스케일/주소 버그다. (upstream test_mqa_logits_triton.py "
+              "의 atol=1.0/rtol=0.2 는 bf16 einsum 참조 때문에 느슨한 것 — fp32 오라클이라 채택하지 않음.) "
+              "top-k 집합 일치는 TolPolicy 로 표현 불가 → 하네스 topk_agreement 별도 판정."),
+    "k12_sparse_mla_sm80": TolPolicy(
+        rmse_rel=5e-3, max_abs=5e-2,
+        basis="sparse split-KV 출력(bf16) vs fp32 oracle(같은 bf16 q/kv, softmax fp32). 커널은 P 를 bf16 "
+              "으로 낮춰 PV dot(tl.dot(p.to(bf16), v)) + bf16 출력 반올림 → 상대 RMS 오차 ≈ 2e-3 "
+              "(CPU 인터프리터를 GPU 와 같은 RNE 로 보정해 실측: rmse_rel 1.5~2.0e-3, 짧은 프리필 포함 "
+              "max_abs ≤ 8e-3; 보정 전 RZ 는 5.3e-3 로 편향돼 부정확) → rmse_rel 5e-3 는 ~2.5배 여유. "
+              "max_abs 5e-2 = upstream test_triton_mla_sparse_kernel.py 가 같은 커널의 split vs single-pass "
+              "대조에 쓰는 atol 과 동일(풀 N(0,1) 극단 5σ 에서 bf16 반올림 worst-case ≈ 3.9e-2 를 덮는 "
+              "절대 상한; 한 질의/헤드만 틀려도 rmse_rel 이 잡는다). k04 와 달리 split+merge 경로를 탄다."),
 }
 
 

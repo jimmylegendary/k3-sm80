@@ -1,4 +1,4 @@
-# vendored from vllm-project/vllm@0498dc7ea9204f1863b46515816f5d8d458e01e7 vllm/third_party/flash_linear_attention/ops/l2norm.py — Apache-2.0
+# vendored from vllm-project/vllm@a3c14efbc77c018e8bf579935095a87721349e05 vllm/third_party/flash_linear_attention/ops/l2norm.py — Apache-2.0
 # 변경점: 출처 헤더 + vllm.* import 상대화 재배선뿐(예외는 vendor/STUBS.md) — 본문 무수정.
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -10,14 +10,23 @@
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 import os
+from typing import Any
 
 import torch
 
+from .._vllm_shims.jit_warmup import WarmupChoices
+from .._vllm_shims.jit_warmup_triton_helper import (
+    DispatchSpec,
+    TritonWarmupTensor,
+    triton_kernel_dispatcher_with_warmup,
+)
 from .._vllm_shims.triton_utils import tl, triton
 
 BT_LIST = [8, 16, 32, 64, 128]
 
 USE_DEFAULT_FLA_NORM = int(os.getenv("USE_DEFAULT_FLA_NORM", "0"))
+
+_L2NORM_MBLOCK = 32
 
 
 @triton.autotune(
@@ -68,13 +77,18 @@ def l2norm_fwd_kernel(
     BT: tl.constexpr,
     BD: tl.constexpr,
 ):
-    i_t = tl.program_id(0)
-    p_x = tl.make_block_ptr(x, (T, D), (D, 1), (i_t * BT, 0), (BT, BD), (1, 0))
-    b_x = tl.load(p_x, boundary_check=(0, 1)).to(tl.float32)
+    i_t = tl.program_id(0).to(tl.int64)
+    o_t = i_t * BT + tl.arange(0, BT)
+    o_d = tl.arange(0, BD)
+    m_t = o_t < T
+    m_x = m_t[:, None] & (o_d[None, :] < D)
+    p_x = x + o_t[:, None] * D + o_d[None, :]
+    p_y = y + o_t[:, None] * D + o_d[None, :]
+
+    b_x = tl.load(p_x, mask=m_x, other=0.0).to(tl.float32)
     b_var = tl.sum(b_x * b_x, axis=1)
     b_y = b_x / tl.sqrt(b_var + eps)[:, None]
-    p_y = tl.make_block_ptr(y, (T, D), (D, 1), (i_t * BT, 0), (BT, BD), (1, 0))
-    tl.store(p_y, b_y.to(p_y.dtype.element_ty), boundary_check=(0, 1))
+    tl.store(p_y, b_y.to(p_y.dtype.element_ty), mask=m_x)
 
 
 @triton.jit
@@ -94,6 +108,36 @@ def l2norm_fwd_kernel2(
     tl.store(Y + (rindex + N * row_idx), xs * rsqrt, mask)
 
 
+def _l2norm_block_dim(element_size: int, dim: int) -> int:
+    return min(65536 // element_size, triton.next_power_of_2(dim))
+
+
+def _l2norm_fwd_block_warmup_inputs(*, dtype: torch.dtype, dim: int) -> dict[str, Any]:
+    block_dim = _l2norm_block_dim(dtype.itemsize, dim)
+    num_rows: Any = WarmupChoices(1, 16, 2)
+    x_aligned: Any = WarmupChoices(True, False)
+    return dict(
+        x=TritonWarmupTensor(dtype, aligned=x_aligned, shape=(num_rows, dim)),
+        y=TritonWarmupTensor(dtype),
+        eps=1e-6,
+        block_dim=block_dim,
+    )
+
+
+@triton_kernel_dispatcher_with_warmup(
+    kernel=l2norm_fwd_kernel2,
+    warmup_inputs=_l2norm_fwd_block_warmup_inputs,
+)
+def l2norm_fwd_block(x, y, eps: float, block_dim: int) -> DispatchSpec:
+    num_rows, dim = x.shape[0], x.shape[-1]
+    return (triton.cdiv(num_rows, _L2NORM_MBLOCK),), dict(
+        M=num_rows,
+        N=dim,
+        BD=block_dim,
+        MBLOCK=_L2NORM_MBLOCK,
+    )
+
+
 def l2norm_fwd(
     x: torch.Tensor, eps: float = 1e-6, output_dtype: torch.dtype | None = None
 ):
@@ -108,23 +152,12 @@ def l2norm_fwd(
     T, D = x.shape[0], x.shape[-1]
     # rstd = torch.empty((T,), dtype=torch.float32, device=x.device)
     # Less than 64KB per feature: enqueue fused kernel
-    MAX_FUSED_SIZE = 65536 // x.element_size()
-    BD = min(MAX_FUSED_SIZE, triton.next_power_of_2(D))
+    BD = _l2norm_block_dim(x.element_size(), D)
     if D > BD:
         raise RuntimeError("This layer doesn't support feature dim >= 64KB.")
 
     if not USE_DEFAULT_FLA_NORM:
-        MBLOCK = 32
-        # M, N = x.shape
-        l2norm_fwd_kernel2[(triton.cdiv(T, MBLOCK),)](
-            x,
-            y,
-            eps,
-            T,
-            D,
-            BD,
-            MBLOCK,
-        )
+        l2norm_fwd_block(x, y, eps, BD)
     else:
         if D <= 512:
             NB = triton.cdiv(T, 2048)

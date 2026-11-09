@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """k03_causal_conv1d — depthwise conv4+SiLU (causal_conv1d_fn/update, Triton) 단독 검증.
 
-대상 API (vLLM kimi-k3 @ 0498dc7ea9204f1863b46515816f5d8d458e01e7 원문 확인):
+대상 API (vLLM main @ a3c14efbc77c018e8bf579935095a87721349e05 원문 확인 — 이전 핀 0498dc7e 에서 재vendor):
   vllm.model_executor.layers.mamba.ops.causal_conv1d.{causal_conv1d_fn, causal_conv1d_update}
   프로덕션 사용처 = nvidia/kda.py:
     prefill: q/k/v 각각 별도 호출 (L591-605) — x (dim, T) channel-last, weight 슬라이스,
@@ -47,8 +47,7 @@ if _KIT not in sys.path:
 from common import env_check, kda_ref, report, shapes, timing, tolerance  # noqa: E402
 
 KID = "k03_causal_conv1d"
-PINS = {"vllm_kimi_k3": "0498dc7e", "vllm_main": "d223c900",
-        "hf": "moonshotai/Kimi-K3@9f62e4e9"}
+PINS = {"vllm_pin": "a3c14efb", "hf": "moonshotai/Kimi-K3@9f62e4e9"}
 PROJ = shapes.KDA_PROJ                     # 12288 (q/k/v 각)
 DIM3 = 3 * PROJ                            # 36864 (packed decode)
 W = shapes.KDA_CONV_KERNEL                 # 4
@@ -64,7 +63,7 @@ def import_conv_ops():
     try:
         from vendor.mamba_ops import causal_conv1d as m  # kernel-kit/vendor
         return m, {"source": "vendor", "module_file": m.__file__,
-                   "pin": PINS["vllm_kimi_k3"]}
+                   "pin": PINS["vllm_pin"]}
     except Exception as e_v:
         try:
             import vllm.model_executor.layers.mamba.ops.causal_conv1d as m

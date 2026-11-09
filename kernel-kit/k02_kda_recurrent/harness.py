@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """k02_kda_recurrent — KDA recurrent decode (fused_recurrent_kda 계열, 순수 Triton) 단독 검증.
 
-대상 API (vLLM kimi-k3 @ 0498dc7ea9204f1863b46515816f5d8d458e01e7 원문 확인):
+대상 API (vLLM main @ a3c14efbc77c018e8bf579935095a87721349e05 원문 확인 — 이전 핀 0498dc7e 에서 재vendor):
   주 경로: fused_recurrent_kda_packed_decode(mixed_qkv, raw_g, raw_beta, A_log, dt_bias,
            lower_bound, initial_state, state_indices)
     — SM80 plain-decode 프로덕션 경로 (nvidia/kda.py L671-683; CUDA fused_kda_decode 는
@@ -44,8 +44,7 @@ if _KIT not in sys.path:
 from common import env_check, kda_ref, report, shapes, timing, tolerance  # noqa: E402
 
 KID = "k02_kda_recurrent"
-PINS = {"vllm_kimi_k3": "0498dc7e", "vllm_main": "d223c900",
-        "hf": "moonshotai/Kimi-K3@9f62e4e9"}
+PINS = {"vllm_pin": "a3c14efb", "hf": "moonshotai/Kimi-K3@9f62e4e9"}
 
 
 def import_kda_ops():
@@ -53,7 +52,7 @@ def import_kda_ops():
     try:
         from vendor import fla_kda as m  # kernel-kit/vendor (sys.path=_KIT)
         return m, {"source": "vendor", "module_file": m.__file__,
-                   "pin": PINS["vllm_kimi_k3"]}
+                   "pin": PINS["vllm_pin"]}
     except Exception as e_v:
         try:
             import vllm.models.kimi_k3.nvidia.ops.third_party.kda as m

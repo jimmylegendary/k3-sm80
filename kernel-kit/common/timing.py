@@ -144,6 +144,20 @@ PERF_POLICY = {
         basis="lane 04/05의 1차 gate는 native-FP8 성능이 아니라 uint8 0.5× HBM "
               "footprint·bit 정확성·paged addressing 성립성이다. 최초 A100 수치는 "
               "측정값으로 보존하고 임의 throughput floor를 적용하지 않는다."),
+    "k11_dsa_indexer_sm80": dict(
+        mode="measure_only", cv_max=0.15,
+        basis="K3.1 P1 은 속도 미보증(리뷰 §5 정직한 상한). SM80 Triton MQA logits(PR #47629 "
+              "mqa_logits_triton.py 의 배포 패치본)는 PR 원본의 A800 e2e 검증이 있으나 패치본(int64 승격)과 A100·K3.1 "
+              "shape(32 head·dim 128·ctx 256k·132 B/tok 스트림) 실측은 없다 — 첫 수치는 임의 floor 없이 측정값으로 "
+              "보존하고(루프라인 대비 효율은 evidence 에만 기록) 반복 안정성 CV ≤ 15% 만 판정한다. "
+              "floor 는 A100 실측 후 별도 사전등록."),
+    "k12_sparse_mla_sm80": dict(
+        mode="measure_only", cv_max=0.15,
+        basis="K3.1 P1 은 속도 미보증(리뷰 §5 정직한 상한). split-KV sparse MLA(PR #47629 "
+              "triton_mla_sparse_kernel.py 의 배포 패치본)는 PR 원본의 A800 e2e·GLM-5.x(heads 64+) 검증이 있을 뿐 패치본"
+              "(int64 승격·workspace 주입)과 K3.1 heads_local=12@TP8·topk 2048·latent 576 의 A100 실측은 없다 — 첫 수치는 임의 floor "
+              "없이 측정값으로 보존하고(gather 2048×576×2 B 루프라인 대비 효율은 evidence 에만 기록) "
+              "반복 안정성 CV ≤ 15% 만 판정한다. floor 는 A100 실측 후 별도 사전등록."),
 }
 
 

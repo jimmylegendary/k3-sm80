@@ -95,3 +95,40 @@
 - full 의 compute-sanitizer PATH 인식(`env_check` 탐색 경로)은 빌드 후 게이트(L149)로 확인
   예정 — 실패 시 `/usr/local/cuda*/bin` 심링크 보정.
 - GPU 실측은 사내 A100 에서만 가능 — dry-run 상한(INCOMPLETE)까지가 호스트 실증 한계.
+
+---
+# 라운드 3 — K3.1 P1: 핀 a3c14efb 재vendor + k11/k12 (2026-11-09~10, 호스트 검증만)
+
+## 산출물
+- vendor 재생성: fla_kda/fla_common/mamba_ops/attn_ops/math_utils 를 핀 a3c14efb 사본으로 교체(본문 무수정 — 예외는 conv1d CPU 블록 제거뿐),
+  이전 사본의 인라인 SM80-FIX(kda-sm80-int64) 2건 퇴역. _vllm_shims 에 5개 신규 스텁(gpu_sync_debug·torch_utils·platform_utils·jit_warmup·jit_warmup_triton_helper) + platforms 갱신.
+- vendor/dsa_ops = 핀 + `docker/patches-k31/triton-mla-sparse-sm80.patch`(sha256 74675e99…7ed8)의 신규 파일 본문(재생성 도구 `vendor/revendor_dsa_ops.py`,
+  계약 테스트 `tests/kernel/test_dsa_ops_vendor.py` 25건). 원천 PR #47629 head 064801dd — **PR 원본이 아니라 배포 패치본**(통합 결함 B 수정, 아래).
+- common/dsa_ref.py·dsa_gate.py(`kernel_provenance` evidence)·triton_interp.py, k11_dsa_indexer_sm80/·k12_sparse_mla_sm80/ 하네스.
+- 등록: shapes(상수·케이스·perf 모델·_CROSSCHECK; `DSA_ROW_INT32_LIMIT` 3,728,270·`DSA_PACKED_BLOCK_STRIDE_ROWS` 1712) · timing.PERF_POLICY(measure_only, cv_max 0.15) ·
+  tolerance.TOL · run_all KERNELS_DEFAULT · relay(`^k\d\d_` + `s2-kernel-report/v1` 만 집계 + ≤12줄 압축) · report.aggregate 타 게이트 스키마 제외.
+- PINS 갱신(k01~k09), k04 sha 핀, k01 long-T int64 퇴역 probe.
+
+## 호스트 게이트 (마스터 재실행 2026-11-10)
+shapes --check(상수 31·커널 11·케이스 59) · timing --selftest · report --selftest(mixed_dir 7항목 true) · check_no_vllm 34파일 ·
+`revendor_dsa_ops.py --check --src-tree <wt-lead>`(패치 본문 == 적용 트리 == vendored) · run_all --cpu-dry-run(exit 0, INC=11, RELAY 10줄, R! 없음) ·
+`python3 -m unittest discover -s tests -t .` OK(skip 41) · venv(torch 2.15 cpu·triton 3.9) tests/kernel OK(`K31_VLLM_SRC` 포함) ·
+인터프리터 k11 5/5(logits rmse_rel ≤ 9.2e-8, top-k 일치 1.0), k12 4/4(rmse_rel 1.55e-3 ~ 1.88e-3, max_abs ≤ 7.96e-3) PASS — **게이트 미반영 evidence**.
+
+## k11/k12 — 판정 대상은 이미지에 실리는 패치본 (통합 결함 B 수정)
+- 결함: `vendor/dsa_ops`가 PR #47629 원본이라 게이트가 배포 커널이 아닌 커널을 판정했다. 수정: 배포 패치의 신규 파일 본문으로 교체했고, 리포트 `evidence.kernel.files`에
+  vendored sha256, 헤더가 주장하는 패치 sha256, `to_int64_markers`(≥4)가 남는다.
+- k12 REQUIRED 11케이스. 신규 `dec_b1_ctx160k_packed`는 packed hybrid row를 흉내 낸다(블록 stride 1712행, ctx 163,840, 물리 row id가 3,728,270 너머). 풀 5.05GB,
+  GPU 추정 5.66GB(≤ 8GiB). 선택 행 중 한계 너머가 0이면 `…/int32_zone` entry가 FAIL한다(공회전 방지). auto 변종은 `max_split_mid_out_numel`만큼 예약한 NaN 오염 workspace에서 스크래치를 받는다.
+- 음성 대조(호스트 인터프리터, 서브프로세스): 배포 패치본 small PASS·big PASS / int64 승격 4곳을 뺀 변종 small PASS·**big SIGSEGV** / PR 원본 small PASS·**big SIGSEGV**.
+  스크래치 `lse` 저장을 뺀 변종은 NaN 오염 workspace에서 출력 NaN/Inf 로 FAIL. workspace 예약 1원소 부족은 `ScratchReservationError`.
+- REQUIRED packed 케이스를 CPU로 그대로 돌려 PASS(선택 2048행 중 308행이 한계 너머, 2.4초, RSS 803MB).
+
+## 정직한 상한 / 미검증
+- GPU 게이트(NUMERIC·SANITIZER·SHAPES·PERF 실행) 전부 미실행. CPU 인터프리터 대조는 PASS 근거가 아니다(bf16 `tl.dot`·RZ 캐스트·autotune 보정 3건 적용, triton 3.9.0 전용).
+- PERF 는 측정 전용(속도 미보증). DeepGEMM bit-exact 비교 없음(오라클은 동일 양자화 입력 공유). A800 e2e 검증(PR 본문)은 PR 원본 기준이며 패치본은 미검증.
+- k11 `dec_b8_ctx256k_pool27x`는 PR 원본 대비 변별력이 없다(paged 커널의 block_idx는 PR 원본도 int64). mqa의 `token_id`/`m`/`n_start` 승격은 logits ≥ 2^31 원소가 필요해 소스 마커로만 고정.
+- `block_stride_rows=1712`는 패치 테스트(W1) 값을 인용했고 독립 재유도하지 않았다(recon 근거 추가 필요).
+- k05/k06 docstring 의 옛 ops.cu 경로·줄 번호는 이력(PINS 만 갱신). vendor/K01-SM80-ANALYSIS.md 는 핀 0498dc7e 기준 이력 문서.
+- 인터프리터에서 k01/k02/k03 커널은 실행 불가(`chunk_intra` `_semantic` ValueError, `causal_conv1d_update` mask dtype) → 정적 계약(AST 시그니처)으로 대체.
+

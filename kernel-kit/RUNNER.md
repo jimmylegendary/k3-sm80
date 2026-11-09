@@ -107,7 +107,7 @@ TRITON_INTERPRET=1 python kernel-kit/k12_sparse_mla_sm80/harness.py --interpret 
 | k05 Marlin MoE | 20–50분 | +30–120분 | **crash 예상 경로**. 케이스=독립 프로세스(사다리 E 8→64→256→896, K 512→3584→7168) — 한 crash가 전체를 안 죽임. 시간은 E=896 가중치 생성·양자화가 지배(케이스당 수 분). sanitizer는 가중치 빌드까지 계측되어 매우 느림 — hang ≠ 실패, 기다릴 것 |
 | k06 dequant bench | 3–6분 | +1–3분 (소형 arm) | 측정 산출형 — CV≤10%면 PASS. `calibration-k06-dequant.json`(dequant_ops/param)이 phase0 재보정 입력 |
 | k11 DSA indexer | 15–30분 | +5–15분 | child 11개(케이스당 데이터 생성·오라클·autotune); `dec_b8_ctx256k_pool27x` 는 ≈7.5GB 풀 (미실측 추정) |
-| k12 sparse MLA | 10–25분 | +5–15분 | child 10개+; kv 풀 b8·256k=2.4GB; split 변종(auto/1/4, prefill auto/2) 전부 대조 (미실측 추정) |
+| k12 sparse MLA | 10–25분 | +5–15분 | child 11개; kv 풀 b8·256k=2.4GB; 신규 `dec_b1_ctx160k_packed` 풀 약 5.05GB(추정 피크 5.66GB, 실측 `case_results.*.extra.gpu_mem`); split 변종(auto/1/4, prefill auto/2) 전부 대조 (미실측 추정) |
 | k07 SiTU 참조 | 1분 | +1–2분 | arm=native(언퓨즈드)+fused(`_C.situ_and_mul`, vLLM 빌드 존재 시 = `:full` 이미지/venv-k3). PERF 기본 판정=fused arm·m8192 케이스만(floor 0.30); `--no-perf` 시 정책상 SKIP(성능 후순위) |
 
 전체 첫 실행 대략 60–110분(추정, k11/k12 가산; autotune 포함), 재실행 ~15–25분.
@@ -149,4 +149,5 @@ git add kernel-kit/kernel-report && git commit -m "kernel-kit: A100 S2 실행 �
 | `children/*.json classification=MEMORY_VIOLATION` | child 가 CUDA illegal access — evidence.cases 의 log_tail 이 S3 입력 |
 | k11 NUMERIC `[케이스/topk]` 위반 | logits(rmse_rel)도 함께 위반이면 디코드/스케일/주소 버그, logits 정상인데 top-k 만이면 TOPK_* 정의(`common/dsa_ref.py`) 재검토 |
 | `dec_b8_ctx256k_pool27x` OOM | 풀 ≈7.5GB — 다른 프로세스의 GPU 점유 확인; 케이스 단위 FAIL 이라 나머지는 유효 |
+| `dec_b1_ctx160k_packed` OOM | 풀 약 5.05GB — GPU 점유 확인; 케이스 단위 FAIL 이라 나머지는 유효. `int32_zone` entry FAIL 은 선택 행이 한계 너머에 하나도 없다는 뜻(공회전 방지) |
 | OOM (k04 b32/128k 등) | 하네스가 케이스 단위로 실행하므로 실패 케이스만 FAIL 기록됨 — 리포트 evidence 확인 후 보고. (k01 b32 프리필은 상주 산정상 OOM 확정이라 b32_T2k 로 사전 축소 — `VERIFICATION.md` #2) |

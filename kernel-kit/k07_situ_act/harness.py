@@ -10,8 +10,8 @@ SiTU 정의 (1차 출처 원문 확인, 2026-07-28 fetch):
   β = 4.0, lβ = 25.0 — config `activation_situ_beta`/`activation_situ_linear_beta`
   (recon/k3-config.md §1 `hidden_act: situ`; shapes.SITU_BETA/SITU_LINEAR_BETA).
 
-vLLM 측 구현 (kimi-k3 `0498dc7e` 원문 확인):
-  vllm/model_executor/layers/activation.py L161-203 `SituAndMul(CustomOp)`:
+vLLM 측 구현 (main `a3c14efb` 원문 확인 — 이전 핀 0498dc7e 와 forward_native 본문 동일):
+  vllm/model_executor/layers/activation.py L162-204 `SituAndMul(CustomOp)` (이전 핀 L161-203):
     - forward_native = 위 HF 수식과 동일 (fp32 내부 → x.dtype 캐스트) — **언퓨즈드 경로**
     - forward_cuda  = 퓨즈드 CUDA op `torch.ops._C.situ_and_mul(out, x, β, lβ)`
       (lβ 미설정은 -1.0 센티널; "no fp32 temporaries")
@@ -69,14 +69,14 @@ from common import env_check, report, shapes, timing, tolerance  # noqa: E402
 KID = "k07_situ_act"
 BETA = shapes.SITU_BETA                # 4.0  (k3-config §1)
 LINEAR_BETA = shapes.SITU_LINEAR_BETA  # 25.0 (k3-config §1)
-PINS = {"vllm_main": "d223c900", "vllm_kimi_k3": "0498dc7e", "hf_kimi_k3": "9f62e4e9"}
+PINS = {"vllm_pin": "a3c14efb", "hf_kimi_k3": "9f62e4e9"}
 
 PERF_JUDGE_MIN_ROOFLINE_US = 30.0      # k04 와 동일 사전등록 규칙
 SATURATE_STRIDE, SATURATE_MULT = 7, 32.0
 
 FORMULA = ("out = [β·tanh(gate/β)·sigmoid(gate)] · [lβ·tanh(up/lβ)], "
            "gate=x[...,:d], up=x[...,d:], β=4.0, lβ=25.0 — "
-           "HF modeling_kimi_linear.py@9f62e4e9 L64-91 = vLLM activation.py@0498dc7e "
+           "HF modeling_kimi_linear.py@9f62e4e9 L64-91 = vLLM activation.py@a3c14efb "
            "SituAndMul.forward_native (동일 수식 원문 대조)")
 
 
@@ -96,7 +96,7 @@ def _situ_fp32(torch, x_f32):
 # 호스트 dry-run 을 깨지 않도록 가드 — vendor/situ.py 는 torch 를 요구한다)
 try:
     from vendor.situ import situ_and_mul_native as _vendor_situ  # noqa: E402
-    _NATIVE_ARM_SOURCE = "vendor/situ.py@0498dc7e (SituAndMul.forward_native 발췌)"
+    _NATIVE_ARM_SOURCE = "vendor/situ.py@a3c14efb (SituAndMul.forward_native 발췌)"
 except Exception as _e_vendor_situ:
     _vendor_situ = None
     _NATIVE_ARM_SOURCE = ("harness 내장 수식 (vendor import 실패: "

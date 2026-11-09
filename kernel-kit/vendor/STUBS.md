@@ -2,7 +2,7 @@
 
 핀: **vLLM main `a3c14efbc77c018e8bf579935095a87721349e05`** (2026-11-09 — K3 코드가 `vllm/models/kimi_k3/` 로 병합된 뒤, K3.1 split 3/6 포함).
 이전 핀 `0498dc7ea9204f1863b46515816f5d8d458e01e7`(kimi-k3 브랜치 = PR #50000 head)은 퇴역.
-예외: `dsa_ops/` 는 **vLLM PR #47629 head `064801dd2bc6ac2e265dc3fa1f5d803d71bde25d`**(원본 #38476 haosdent) — 병합 전 SM80 DSA 커널(§4).
+예외: `dsa_ops/` 는 핀 `a3c14efb` 위에 **`docker/patches-k31/triton-mla-sparse-sm80.patch`(sha256 `74675e998be0022aa4caed7df4467b62148fad09a6af9e47d13ea1b302fb7ed8`)를 적용한 결과 파일 2개**다 — 이미지에 실리는 SM80 DSA 커널과 본문이 같다(§4). 원천은 vLLM PR #47629 head `064801dd2bc6ac2e265dc3fa1f5d803d71bde25d`(원본 #38476 haosdent, thomaslwang 인수)이지만 PR 원본이 아니다. `dsa_ops/` 만 `git show` 복사가 아니라 `python3 kernel-kit/vendor/revendor_dsa_ops.py --write` 로 패치의 신규 파일 본문에서 생성한다.
 모든 파일은 핀 클론에서 `git show <핀>:<경로>` 로 복사했다(2026-11-09). 목적: k01~k04·k07·k11·k12 하네스를 **vLLM 설치 없이 torch+triton 만으로** 실행(PLAN §S2 전달 모델).
 게이트: `python3 vendor/check_no_vllm.py` = py_compile + AST(vllm import 0건 + 외부 의존 allowlist {torch, triton, numpy, packaging}) — run_all.sh 자체점검에 포함(33파일 green).
 "본문 무수정" 증명: `tests/kernel/test_vendor_pin_contract.py::VendorBodyEqualsPinTest` — 핀 원본과 사본의 difflib diff 가 import 행(+ conv1d CPU 블록)뿐임을 검사(핀 클론 `~/repos/vllm-pin-k31` 필요).
@@ -58,19 +58,19 @@ kda 의존 체인은 위에서 닫힌다: fla_kda → fla_common + `_vllm_shims`
 - <a name="situ"></a>**`situ.py`**: 파일 전문이 아닌 발췌 — 원본 `activation.py` L184-191 `SituAndMul.forward_native` 수식을 함수 `situ_and_mul_native` 로 추출(이전 핀 L183-190 과 본문 동일, 줄 번호만 +1). 퓨즈드 CUDA op(`torch.ops._C.situ_and_mul`)는 C-확장이라 vendor 불가 — k07 fused arm 은 vLLM 존재 시에만 실행.
 - **퇴역 — 인라인 SM80-FIX 2건**: 이전 사본의 `fla_kda/chunk.py`(P1: `h + (i_tg*H+i_h).to(tl.int64)*K*V`)와 `fla_common/chunk_delta_h.py`(P2: cast-before-multiply)는 본문 수정이었다. 핀 a3c14efb 는 두 수정을 upstream 에 포함(`chunk_delta_h.py` L98-103, `i_t` int64 승격, `make_block_ptr`→포인터 연산 재작성)하므로 사본은 다시 무수정 원본이다. 퇴역 확정은 A100 k01 `b1_T128k`(131,072 tok ≥ 87,424) NUMERIC PASS — `evidence.int64_retirement_probe.all_passed`. 실패(IMA·NUMERIC FAIL)하면 `docker/patches` 의 kda-sm80-int64 를 복원한다.
 
-## 4. dsa_ops — SM80 DSA 커널 (PR #47629 head `064801dd`)
+## 4. dsa_ops — 이미지에 실리는 SM80 DSA 커널 (핀 a3c14efb + triton-mla-sparse-sm80.patch)
 
-| 원본 (PR head) | vendor | 줄 수 | 소비자 |
+| 원본 (패치 신규 파일) | vendor | 줄 수 | 소비자 |
 |---|---|---|---|
-| `vllm/v1/attention/ops/mqa_logits_triton.py` | `dsa_ops/mqa_logits_triton.py` | 458→461 | k11 (`fp8_paged_mqa_logits_triton` decode, `fp8_mqa_logits_triton` prefill) |
-| `vllm/v1/attention/ops/triton_mla_sparse_kernel.py` | `dsa_ops/triton_mla_sparse_kernel.py` | 550→553 | k12 (`triton_mla_sparse_attention`) |
-| — | `dsa_ops/__init__.py` (PEP 562 lazy 6심볼) | 36 | — |
+| `vllm/v1/attention/ops/mqa_logits_triton.py` | `dsa_ops/mqa_logits_triton.py` | 467→470 | k11 (`fp8_paged_mqa_logits_triton`, `fp8_mqa_logits_triton`) |
+| `vllm/v1/attention/ops/triton_mla_sparse_kernel.py` | `dsa_ops/triton_mla_sparse_kernel.py` | 582→585 | k12 (`triton_mla_sparse_attention`, `max_split_mid_out_numel`) |
+| — | `dsa_ops/__init__.py` (PEP 562 lazy 7심볼) | 40 | — |
 
-- 출처 헤더 3줄(`PR #47629 head 064801dd…, origin #38476 haosdent`, Apache-2.0·SPDX 원문 유지). 본문 무수정.
-- 쉼 재배선: `vllm.triton_utils`(tl, triton, LOG2E, LOGE2) → `triton_utils` 스텁, `vllm.utils.platform_utils.num_compute_units` → `platform_utils` 스텁. vllm import 0건.
-- 두 파일은 main(a3c14efb)에 없고 PR 에만 있다(merge-base 62a86318 이후 main 변경 없음) → PR 사본이 곧 최신.
-- 주의: 병합 전 사본(split 3/6 이전 base)이다. 배포 패치(rebase)가 커널 본문을 바꾸면 그 결과로 재vendor 할 것 — kernel-kit 은 이 사본만 검증한다.
-- 입력 규약: k11 q 는 E4M3 바이트(fp8 view) + 접힌 fp32 가중치, K 캐시는 `[block×128 fp8 | block×4B fp32 scale]`(132 B/tok). k12 kv 는 `(S,1,576)` bf16 물리 행 풀, indices 는 `(T,1,topk)` int32 이며 <0 이면 무효.
+- 출처 헤더 3줄: `vendored from vllm-project/vllm@a3c14efb… + k3-sm80 docker/patches-k31/triton-mla-sparse-sm80.patch (sha256 74675e99…7ed8) <원본 경로> — Apache-2.0` / `원천: PR #47629 head 064801dd… (origin PR #38476) 원저자 haosdent/thomaslwang` / `변경점: 출처 헤더 + vllm.* import 상대화 재배선뿐 — 본문 무수정`. 원본 SPDX 헤더는 그대로 아래에 유지. 본문 == 패치 신규 파일 본문이고 줄 수가 불변이며, 다른 줄은 `from vllm.triton_utils import …` → `from .._vllm_shims.triton_utils import …`, `from vllm.utils.platform_utils import …` → `from .._vllm_shims.platform_utils import …` 뿐이다(mqa 1줄, sparse 2줄). vllm import 0건.
+- PR 원본 대비 패치본의 차이: ① int64 승격 — sparse: `indices = indices.to(tl.int64)`, `cur_q = tl.program_id(0).to(tl.int64)` ×3(final/split/merge). mqa: `token_id`, `m`, `n_start`. packed hybrid KV row의 물리 row id × 576 오프셋이 row id ≥ 3,728,270(=2^31/576, 약 139k 토큰)에서 int32를 넘는다. ② split-KV 스크래치 workspace 주입 — `mid_out_getter`, `max_split_mid_out_numel`. ③ docstring 빈 줄, 출처 주석 1줄. 호스트 인터프리터에서 PR 원본·int64 제거 변종은 이 구간에서 SIGSEGV 한다.
+- 재생성·검증: `python3 kernel-kit/vendor/revendor_dsa_ops.py --write | --check [--src-tree <패치 적용 vLLM 트리>]`. 계약 테스트 `tests/kernel/test_dsa_ops_vendor.py`가 헤더(핀·패치·sha256), int64·workspace 마커(마커 검사기 자체의 음성 대조 포함), 본문 == 패치 본문(독립 구현 교차), 도구 재생성 바이트 일치, `K31_VLLM_SRC` 적용 트리 대조, 예약식 타이트성, int64 제거 변종·PR 원본의 big 기하 실패와 small 대조군 통과, 더러운 workspace 대조를 고정한다.
+- 갱신 규칙: 패치(sha256)가 바뀌면 `test_header_sha256_is_the_sha256_of_the_patch_file`이 실패한다 → `--write`로 재vendor, `vendor/__init__.py`의 `DSA_OPS_PATCH_SHA256`과 이 절의 sha 갱신.
+- 정직한 상한: 인터프리터 수치는 PASS 근거가 아니다. mqa의 `token_id`/`m`/`n_start` 승격은 logits ≥ 2^31 원소가 필요해 수치로 측정하지 않고 소스 마커로만 고정한다. 패치본은 A800 e2e 검증 대상이 아니다(검증된 것은 PR 원본).
 
 ## 5. `common/triton_interp.py` — CPU 인터프리터 보정 (k11/k12 `--interpret` 전용)
 
@@ -90,4 +90,4 @@ kda 의존 체인은 위에서 닫힌다: fla_kda → fla_common + `_vllm_shims`
 ## 7. 하네스 폴백 규약
 
 k01~k04·k07 은 **vendor 우선 → 실패 시 vllm 폴백**(try/except). 어느 쪽을 썼는지 리포트 evidence(`kernel_import`/`kernel.source`/`native_arm_source`)에 기록된다.
-k11·k12 는 `vendor.dsa_ops` 를 직접 import 하며 폴백이 없다(PR 사본이 대상). k05(Marlin)는 vLLM C-확장이라 vendor 대상 아님.
+- k11·k12 는 `vendor.dsa_ops`를 직접 import하며 폴백이 없다(대상은 배포 패치본).

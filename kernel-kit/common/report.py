@@ -42,6 +42,7 @@ if _KIT not in sys.path:
 from common import env_check, shapes  # noqa: E402
 
 SCHEMA_VERSION = "s2-kernel-report/v1"
+SCHEMA_FAMILY = SCHEMA_VERSION.split("/")[0] + "/"   # "s2-kernel-report/" — 이 계열이 아닌 schema_version 은 다른 게이트의 리포트다
 GATES = ("NUMERIC", "SANITIZER", "SHAPES", "PERF")
 STATUSES = ("PASS", "FAIL", "SKIP")
 
@@ -232,9 +233,16 @@ def aggregate(report_dir: str, expected: list[str] | None = None) -> dict:
     expected = expected or list(shapes.KERNEL_IDS)
     found: dict[str, dict] = {}
     invalid: dict[str, list[str]] = {}
+    foreign: dict[str, str] = {}
     for path in sorted(glob.glob(os.path.join(report_dir, "k[0-9][0-9]_*.json"))):
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
+        schema = d.get("schema_version") if isinstance(d, dict) else None
+        if isinstance(schema, str) and not schema.startswith(SCHEMA_FAMILY):
+            # k10(DSpark 통합 게이트, k10-dspark-report/v1) 등 다른 게이트의 리포트 — S2 커널 집계 대상이 아니다.
+            # 스키마 위반으로 세지 않고 별도로 기록한다(같은 report dir 에 섞여도 summary 가 오염되지 않게).
+            foreign[os.path.basename(path)] = schema
+            continue
         errs = validate_report(d)
         if errs:
             invalid[os.path.basename(path)] = errs
@@ -256,6 +264,7 @@ def aggregate(report_dir: str, expected: list[str] | None = None) -> dict:
             .isoformat(timespec="seconds"),
             "report_dir": os.path.abspath(report_dir),
             "counts": counts, "kernels": rows, "invalid": invalid,
+            "foreign_schema_reports": foreign,
             "s2_complete": counts["PASS"] == len(expected)}
 
 
@@ -278,6 +287,10 @@ def render_summary_md(s: dict) -> str:
         lines += ["", "## 스키마 위반 리포트", ""]
         for name, errs in s["invalid"].items():
             lines.append(f"- {name}: {'; '.join(errs)}")
+    if s.get("foreign_schema_reports"):
+        lines += ["", "## 집계 제외 — 다른 게이트의 리포트(S2 KernelReport 아님)", ""]
+        for name, schema in s["foreign_schema_reports"].items():
+            lines.append(f"- {name}: {schema}")
     lines += ["",
               "해석: MISSING=하네스 미저작/미실행 · INCOMPLETE=FAIL 없이 SKIP 잔존"
               "(dry-run 상한) · S4 진입은 해당 커널 overall=PASS 가 조건 (docs/PLAN.md).",
@@ -320,18 +333,61 @@ def _selftest(report_dir: str | None) -> int:
         ok &= not validate_report(json.load(f))
     # 집계 로직 검증은 **항상 빈 임시 디렉터리**에서 수행한다 — report_dir(라이브)로 하면
     # 커널 리포트가 하나라도 쌓인 뒤의 모든 재실행에서 selftest 가 영구 FAIL(run_all exit 3).
-    empty = tempfile.mkdtemp(prefix="s2-report-selftest-empty-")
-    agg = aggregate(empty)   # 빈 디렉터리 집계 → 전부 MISSING 이어야 함
+    with tempfile.TemporaryDirectory(prefix="s2-report-selftest-empty-") as empty:
+        agg = aggregate(empty)   # 빈 디렉터리 집계 → 전부 MISSING 이어야 함
     ok &= agg["counts"]["MISSING"] == len(shapes.KERNEL_IDS)
+    mixed_ok, mixed_detail = _selftest_mixed_dirs(d)
+    ok &= mixed_ok
     print(json.dumps({"report_selftest": "PASS" if ok else "FAIL",
-                      "sample": jpath, "validate_errors": errs}, ensure_ascii=False))
+                      "sample": jpath, "validate_errors": errs, "mixed_dir": mixed_detail}, ensure_ascii=False))
     return 0 if ok else 1
+
+
+def _selftest_mixed_dirs(sample: dict) -> tuple[bool, dict]:
+    """깨끗한 report dir 와 'k10·c01 등 비-KernelReport 리포트가 섞인 dir' 에서 집계·RELAY 가 같아야 한다.
+
+    run_all 대상이 아닌 게이트(k10 DSpark, c01 EP32)의 리포트가 같은 dir 에 남아도 RELAY 의 커널 줄·합계·`R!` 혼합실행 경고,
+    그리고 summary 의 스키마 위반 목록이 오염되면 안 된다 (relay.py 모듈 docstring '무시 규칙' 참조).
+    """
+    import tempfile
+    from common import relay
+    foreign = {  # meta(run_id/tier) 없음, 게이트 이름도 다름 — 실제 k10/c01 리포트와 같은 모양
+        "k10_k3_dspark_sm80.json": {"schema_version": "k10-dspark-report/v1", "id": "k10_k3_dspark_sm80",
+                                    "overall": "INCOMPLETE", "gates": {"STATE": {"status": "SKIP", "reason": "x"}},
+                                    "evidence": {}},
+        "k13_future_gate.json": {"schema_version": "k13-future/v1", "id": "k13_future_gate", "overall": "FAIL",
+                                 "gates": {}, "evidence": {}},
+        "c01_ep32_a2a.json": {"schema_version": "c01-ep32-report/v1", "id": "c01_ep32_a2a", "overall": "INCOMPLETE",
+                              "gates": {}, "evidence": {}},
+    }
+    with tempfile.TemporaryDirectory(prefix="s2-report-selftest-clean-") as clean, \
+            tempfile.TemporaryDirectory(prefix="s2-report-selftest-mixed-") as mixed:
+        for target in (clean, mixed):
+            for kid in shapes.KERNEL_IDS:                   # 11종 dry-run 모양의 KernelReport (sample 을 id 만 바꿔 복제)
+                with open(os.path.join(target, f"{kid}.json"), "w", encoding="utf-8") as f:
+                    json.dump({**sample, "id": kid}, f, ensure_ascii=False)
+        for name, payload in foreign.items():
+            with open(os.path.join(mixed, name), "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+        lines_clean, lines_mixed = relay.build(clean), relay.build(mixed)
+        agg_clean, agg_mixed = aggregate(clean), aggregate(mixed)
+    checks = {
+        "relay_identical": lines_clean == lines_mixed,
+        "relay_within_12_lines": len(lines_mixed) <= relay.MAX_LINES,
+        "relay_no_mixed_run_warning": not any(ln.startswith("R!") for ln in lines_clean + lines_mixed),
+        "aggregate_counts_identical": agg_clean["counts"] == agg_mixed["counts"],
+        "aggregate_no_schema_violation": not agg_clean["invalid"] and not agg_mixed["invalid"],
+        "aggregate_lists_foreign": sorted(agg_mixed["foreign_schema_reports"]) ==
+        ["k10_k3_dspark_sm80.json", "k13_future_gate.json"],      # c01 은 이름(k\d\d_) 필터에서 이미 제외
+        "relay_schema_matches_report": relay.KERNEL_REPORT_SCHEMA == SCHEMA_VERSION,
+    }
+    return all(checks.values()), checks
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="S2 리포트 스키마/집계 도구")
     ap.add_argument("--aggregate", metavar="DIR", help="kernel-report 디렉터리 집계")
-    ap.add_argument("--expect", nargs="*", default=None, help="기대 커널 id 목록(기본: 7종 전부)")
+    ap.add_argument("--expect", nargs="*", default=None, help="기대 커널 id 목록(기본: shapes.KERNEL_IDS 전부 = 11종)")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--report-dir", default=None)
     a = ap.parse_args()
