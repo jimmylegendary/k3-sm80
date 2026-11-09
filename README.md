@@ -66,6 +66,7 @@ bash run/26-k01-ab.sh full                # ④ (선택) k01 int32 수정 확정
 | `phase0/` | hatir 해석 모델 — 타당성 게이트 **PASS** (TP8PP4 real 46.8 tok/s, `verdict.json`) |
 | `recon/` | 업스트림·사실관계 조사 (버전 pin 근거) |
 | `docs/PLAN.md` | 전체 계획 S0~S6 + 단계별 완료 판정 |
+| `docs/K31-SUPPORT-REVIEW.md` | **Kimi K3.1-Pro 지원 검토(2026-11-09)** — 체크포인트 diff·vLLM main DSA 경로의 SM80 블록 2건·리포 변경 지도·phase 계획·결정 요청 |
 | `results/incoming/` | 사내 실행 결과 회신함 (`run/30` 이 커밋) |
 
 ## 지금 어디까지 왔나 (2026-07-29)
