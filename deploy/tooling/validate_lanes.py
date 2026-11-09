@@ -1,4 +1,4 @@
-"""Static repository validation for the five generated serving lanes."""
+"""Static repository validation for the generated serving lanes."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ _TOP_LEVEL_FILES = frozenset({".env", "compose.yaml", "Makefile", "RUNBOOK.md", 
 _SCRIPT_FILES = frozenset({"preflight.py", "cluster.py", "smoke.py"})
 _PROFILES = ("head", "worker1", "worker2", "worker3")
 _PORT_KEYS = ("VLLM_API_PORT", "VLLM_MASTER_PORT", "VLLM_DP_RPC_PORT")
+# docs/A100-5LANE-RESULTS.md(K3 lane 01-05)의 증거 행 ID.
 _EVIDENCE_IDS = (
     "k08",
     "c01",
@@ -26,6 +27,15 @@ _EVIDENCE_IDS = (
     "lane03",
     "lane04",
     "lane05",
+)
+# docs/A100-K31-RESULTS.md(K3.1 lane 11)의 증거 행 ID. 두 문서는 서로 독립이라
+# K3 5-lane 문서 검증은 K3.1 행을 요구하지 않고, 그 반대도 마찬가지다.
+_EVIDENCE_IDS_K31 = (
+    "k08",
+    "kda",
+    "k11",
+    "k12",
+    "lane11",
 )
 
 
@@ -88,7 +98,7 @@ def validate_repository(root: Path) -> list[str]:
     expected_ids = {lane.id for lane in LANES}
     actual_ids = {
         path.name
-        for path in deploy.glob("0*-*")
+        for path in deploy.glob("[0-9][0-9]-*")
         if path.is_dir()
     } if deploy.is_dir() else set()
     for lane_id in sorted(expected_ids - actual_ids):
@@ -98,7 +108,9 @@ def validate_repository(root: Path) -> list[str]:
 
     env_files = sorted(deploy.rglob(".env")) if deploy.is_dir() else []
     if len(env_files) != len(LANES):
-        errors.append(f"expected exactly 5 .env files, got {len(env_files)}")
+        errors.append(
+            f"expected exactly {len(LANES)} .env files, got {len(env_files)}"
+        )
     override_envs = sorted(
         path
         for path in deploy.rglob("*")
@@ -148,8 +160,15 @@ def validate_repository(root: Path) -> list[str]:
     return errors
 
 
-def validate_evidence(path: Path) -> list[str]:
-    """Validate the compact A100 evidence table without promoting dry runs."""
+def validate_evidence(
+    path: Path,
+    evidence_ids: tuple[str, ...] = _EVIDENCE_IDS,
+) -> list[str]:
+    """Validate the compact A100 evidence table without promoting dry runs.
+
+    ``evidence_ids``는 그 문서가 반드시 가져야 하는 행 ID 집합이다
+    (K3 5-lane 문서는 기본값, K3.1 문서는 ``_EVIDENCE_IDS_K31``).
+    """
 
     if not path.is_file():
         return [f"evidence missing: {path}"]
@@ -164,14 +183,14 @@ def validate_evidence(path: Path) -> list[str]:
         identifier = fields[0]
         if identifier in {"id", "---"} or set(identifier) == {"-"}:
             continue
-        if identifier not in _EVIDENCE_IDS:
+        if identifier not in evidence_ids:
             continue
         if identifier in rows:
             errors.append(f"duplicate evidence row: {identifier} line={line_number}")
             continue
         rows[identifier] = fields
 
-    missing = [identifier for identifier in _EVIDENCE_IDS if identifier not in rows]
+    missing = [identifier for identifier in evidence_ids if identifier not in rows]
     if missing:
         errors.append(f"missing evidence rows: {', '.join(missing)}")
 
@@ -193,6 +212,12 @@ def validate_evidence(path: Path) -> list[str]:
     return errors
 
 
+def validate_evidence_k31(path: Path) -> list[str]:
+    """Validate docs/A100-K31-RESULTS.md (rows: k08 kda k11 k12 lane11)."""
+
+    return validate_evidence(path, _EVIDENCE_IDS_K31)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -204,20 +229,35 @@ def main() -> int:
     parser.add_argument(
         "--evidence",
         type=Path,
-        help="optional A100 evidence markdown table",
+        help="optional A100 evidence markdown table for K3 lanes 01-05",
+    )
+    parser.add_argument(
+        "--evidence-k31",
+        type=Path,
+        help="optional A100 evidence markdown table for K3.1 lane 11",
     )
     args = parser.parse_args()
     errors = validate_repository(args.root)
     if args.evidence is not None:
         errors.extend(validate_evidence(args.evidence))
+    if args.evidence_k31 is not None:
+        errors.extend(validate_evidence_k31(args.evidence_k31))
     for error in errors:
         print(f"ERROR {error}")
     env_files = list((args.root / "deploy").rglob(".env"))
     evidence = str(args.evidence) if args.evidence is not None else "not-requested"
-    print(
+    summary = (
         f"lanes={len(LANES)} env_files={len(env_files)} "
         f"evidence={evidence} errors={len(errors)}"
     )
+    if args.evidence_k31 is not None:
+        # 기존 출력 형식은 그대로 두고, K3.1 문서를 요청한 경우에만 필드를 덧붙인다.
+        summary = (
+            f"lanes={len(LANES)} env_files={len(env_files)} "
+            f"evidence={evidence} evidence_k31={args.evidence_k31} "
+            f"errors={len(errors)}"
+        )
+    print(summary)
     return 1 if errors else 0
 
 

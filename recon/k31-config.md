@@ -104,3 +104,19 @@ MXFP4(`weight_packed`+`weight_scale`) 텐서 집합은 K3와 동일(routed exper
 
 - indexer `wq_b`가 q_lora(1536) 입력인 것은 vLLM `dsa.py`의 `wq_index` 정의와 텐서 크기(6,291,456 = 4096×1536)로 유도한 것이며 HF modeling 코드가 없어 원문 확인은 불가.
 - MXFP8 activation(QAT)은 K3와 같이 저장 포맷이 아님(`input_activations: null`).
+- `text_config.rms_norm_eps`(indexer k_norm eps) 값은 이 문서에 미기재 — kernel-kit 은 예시 1e-6 을 쓴다(커널 간 비교에는 영향 없음).
+
+## 8. kernel-kit 상수 ↔ 출처 (`kernel-kit/common/shapes.py` §3b)
+
+| 상수 | 값 | 출처 |
+|---|---|---|
+| `DSA_LAYERS` | 24 | §2 dsa_layers 24개 (= `MLA_LAYERS`) |
+| `DSA_INDEX_HEADS` / `DSA_INDEX_HEAD_DIM` / `DSA_TOPK` | 32 / 128 / 2048 | §2 index_num_heads / index_head_dim / index_topk |
+| `DSA_INDEX_ROPE_DIM` | 0 | §2 index_rope_dim |
+| `DSA_INDEX_K_BYTES` | 132 | §4 (128 B E4M3 + 4 B fp32 scale; vLLM `csrc/cache_kernels.cu:755-764` 레이아웃 `[bs×128 fp8 | bs×4B scale]`) |
+| `DSA_INDEX_SKIP_TOPK_OFFSET` | 1 | §2 index_skip_topk_offset (vLLM 소비처 없음) |
+| `DSA_BLOCK_SIZE` | 64 | vLLM `TRITON_MLA_SPARSE` `MultipleOf(64)` / indexer 백엔드 block 64 ([K31-SUPPORT-REVIEW.md](/home/jimmy/repos/k3-sm80/docs/K31-SUPPORT-REVIEW.md) §B2) |
+| `DSA_HEADS_LOCAL` | 12 | MLA heads 96 / TP8 (lane 01형) |
+| MLA softmax scale | 192^-0.5 | vLLM `models/kimi_k3/nvidia/mla.py` L164 (qk_head_dim 128+64) |
+| index weight_scale | 128^-0.5 · 32^-0.5 | vLLM `models/kimi_k3/nvidia/dsa.py` L135·L189·L373 |
+| indexer k_norm | fp32 LayerNorm(weight, bias, eps) → 입력 dtype | `dsa.py` L84-106 (index_k_norm_type=layernorm) |

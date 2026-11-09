@@ -55,11 +55,30 @@ bash run/26-k01-ab.sh full                # ④ (선택) k01 int32 수정 확정
 - `run/20` 의 exit: 0=FAIL 없음 · 1=FAIL/CRASH 존재(그것도 유효한 결과) · **2=실행 안 됨(성공 아님)**.
 - 요약은 `kernel-kit/kernel-report/SUMMARY.md`, 커널별 상세는 같은 폴더의 `<커널id>.md/.json`.
 
+## Kimi K3.1-Pro 지원 (P1, 2026-11-09 — 호스트 검증까지, A100 미실행)
+
+K3 이미지·lane(위 절차)은 그대로 두고, **최신 vLLM main 핀 `a3c14efb` 위에 K3.1(DSA) 경로를 얹은 별도 이미지·lane**을 추가했다
+(설계·근거: `docs/K31-SUPPORT-REVIEW.md`, 핀 사실: `recon/vllm-upstream-k31.md`, 체크포인트 diff: `recon/k31-config.md`).
+
+| 구성 | 위치 | 비고 |
+|---|---|---|
+| vLLM 패치 세트(K3.1 전용) | `docker/patches-k31/` (`README.md`에 적용 순서·근거) | marlin SM80 rebase · `TRITON_MLA_SPARSE`+SM80 indexer(PR #47629 rebase, int64 수정) · K3.1 DSA glue |
+| 이미지 레시피 | `docker/Dockerfile.k31-full` → `docker/Dockerfile.k31-openai`, `docker/build-k31.sh`, `docker/release-k31.sh`, 검증기 `docker/verify_k31_image.py` | CUDA 13.0.3 / torch 2.14 / Ubuntu 24.04(핀 CMake가 g++≥13 요구). 반입 절차 `docker/PULL-K31.md` |
+| 사내 러너 스크립트 | `bash run/11-load-k31-image.sh` → `bash run/21-k31-kernel-test.sh` | K3용 `run/10`·`run/20`은 변경 없음 |
+| kernel-kit 게이트 | `k11_dsa_indexer_sm80`, `k12_sparse_mla_sm80` (+ k01~k09 핀 재vendor) | NUMERIC/SANITIZER/SHAPES 판정, PERF 측정 전용. CPU 인터프리터 대조는 PASS 근거 아님 |
+| 서빙 lane | `deploy/11-k31-tp8-pp4-256k-safe/` (`make -C … gates up gate-load gate-context smoke`) | TP8/PP4 · 256k · `--kv-cache-dtype bfloat16` 명시 · `--attention-backend TRITON_MLA_SPARSE` · DSpark 없음 · enforce_eager |
+| 증거 표 | `docs/A100-K31-RESULTS.md` | 전부 INCOMPLETE에서 시작 — 사내 1라운드 결과로만 PASS/FAIL 기입 |
+
+**정직한 상한**: 호스트에서는 핀 worktree 패치 적용·py_compile·AST·ruff·unittest·CPU dry-run·Triton 인터프리터 수치 대조·sm_80 PTX 컴파일까지만 확인했다.
+GPU 실행(커널 4게이트, 서빙 smoke), 속도, 1M, DSpark, FP8 KV는 P1 범위 밖이거나 사내 A100 라운드에서 판정한다.
+
 ## 리포 지도
 
 | 경로 | 내용 |
 |---|---|
 | `run/` | **사내 러너용 스크립트** (위 표 — 이것만 쓰면 됨) |
+| `docker/patches-k31/`, `docker/Dockerfile.k31-*`, `docker/PULL-K31.md` | **K3.1 전용** 패치 세트·이미지 레시피·반입 절차 (K3 것과 분리) |
+| `deploy/11-k31-*/`, `docs/A100-K31-RESULTS.md` | **K3.1 lane 11**(TP8/PP4 256k bf16)과 그 증거 표 |
 | `kernel-kit/` | S2 커널 단독검증 하네스 (k01~k07) + `vendor/` (vLLM 에서 vendor 한 Triton 커널 — torch+triton 만으로 실행) |
 | `docker/` | 이미지 2티어 빌드·배포 (`PULL.md` = 수동 절차 상세, `RELEASE-TAG.txt` = 최신 릴리스 태그) |
 | `a100-kit/` | S1 프로브 킷 (vLLM 서빙 경로 프로브 — probe_35922 등; full 이미지 이후 단계) |

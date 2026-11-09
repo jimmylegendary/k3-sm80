@@ -14,6 +14,9 @@ INTEGRATION_DIR := $(RUN_ROOT)/integration
 
 .PHONY: help config preflight dry-run up down status logs smoke gates \
 	verify-gates verify-all-gates gate-k08 gate-kda gate-c01 gate-k09 \
+@@IF K31@@
+	gate-k11 gate-k12 \
+@@ENDIF@@
 	gate-load gate-context gate-dspark baseline calibrate
 
 help:
@@ -22,6 +25,10 @@ help:
 	  '  make config       Render Compose configuration' \
 	  '  make preflight    Validate all four nodes and shared assets' \
 	  '  make gates        Run standalone/communication prerequisites' \
+@@IF K31@@
+	  '  make gate-k11     Run SM80 DSA indexer kernel gate (k11)' \
+	  '  make gate-k12     Run SM80 sparse MLA kernel gate (k12)' \
+@@ENDIF@@
 	  '  make up/down      Start or stop this lane on four nodes' \
 	  '  make gate-load    Validate checkpoint load/topology' \
 	  '  make gate-context Validate this lane context target' \
@@ -65,6 +72,14 @@ gate-c01:
 gate-k09:
 	@$(GATE) run --lane $(CURDIR) --gate k09
 
+@@IF K31@@
+gate-k11:
+	@$(GATE) run --lane $(CURDIR) --gate k11
+
+gate-k12:
+	@$(GATE) run --lane $(CURDIR) --gate k12
+
+@@ENDIF@@
 up: preflight verify-gates
 	@$(REMOTE) up --lane $(CURDIR)
 

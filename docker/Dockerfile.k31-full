@@ -1,0 +1,209 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# k31-sm80 kernel-kit — full 티어 (Kimi K3.1-Pro 전용 · vLLM main a3c14efb SM80 소스빌드)
+#
+# ★ K3 이미지와 별개 ★  docker/Dockerfile.full(K3, 사내 동작 중)은 그대로다. 이 파일은 신규이며
+#   K3 파일·태그·패치를 참조하지 않는다. 태그도 분리한다:
+#     K3   : ghcr.io/jimmylegendary/k3-sm80-kernelkit:full
+#     K3.1 : k31-sm80-kernelkit:full-a3c14efb   (로컬 태그 — docker/build-k31.sh 가 만든다)
+#
+# 목적: vLLM main a3c14efbc77c018e8bf579935095a87721349e05 (2026-11-09, K3.1 split 3/6 #66037 이후)를
+#   TORCH_CUDA_ARCH_LIST=8.0 으로 소스빌드한 "패치 전" 기반 이미지. docker/Dockerfile.k31-openai 가 이 위에
+#   SM80 패치 세트(marlin rebase · triton-mla-sparse · dsa-glue)를 얹는다. compute-sanitizer 동봉.
+#
+# ★ 빌드에 GPU 불필요 ★ — nvcc 는 크로스컴파일러다. 아치를 8.0 으로 고정하므로 GPU 없는 호스트에서 빌드해
+#   사내 A100 으로 반입한다.
+#
+# ---- 베이스·CUDA 선택 근거 (2026-11-09 재확인) -------------------------------------------------------
+#  (1) CUDA 13.0.3 유지 — 핀 requirements/build/cuda.txt·cuda.txt 가 torch==2.14.0 을 요구하고, PyPI 의 torch 2.14.0
+#      기본 wheel 은 CUDA 13 빌드다(requires_dist: cuda-toolkit[...]==13.0.3, nvidia-cudnn-cu13==9.24.0.43,
+#      nvidia-nccl-cu13 — PyPI JSON 직접 확인). 핀의 nvidia-cutlass-dsl[cu13]·humming-kernels[cu13] 도 cu13 전제다.
+#      → nvcc 13.0 과 torch.version.cuda major 가 일치하고, cu12.6 torch 로 내려갈 이유가 없다.
+#      사내 K3 full 이미지가 이미 CUDA 13.0.3 유저랜드로 동작 중이므로 드라이버(r580+) 요구도 K3 와 같다.
+#  (2) ★ Ubuntu 22.04 가 아니라 24.04 — 핀 CMakeLists.txt:1842-1850 이 CUDA 빌드에서 g++ < 13 을 FATAL_ERROR 로
+#      거부한다(DeepGEMM·DeepSelect 호스트 코드가 C++20 <format> 사용, vllm#58158). 22.04 의 기본 g++ 은 11 이라
+#      configure 끝에서 실패한다. 22.04 + PPA gcc-13 은 런타임 libstdc++(GLIBCXX_3.4.32) 불일치 위험이 있어 쓰지 않고,
+#      g++ 13.2 + libstdc++ 가 기본인 24.04 를 쓴다(upstream docker/Dockerfile 도 UBUNTU_VERSION=24.04 + CUDA 13.0.3).
+#      24.04 는 python3.12 가 기본 패키지라 deadsnakes PPA 가 필요 없다. 호스트 OS 와 무관(컨테이너 유저랜드)이다.
+#  (3) 베이스 실존 — docker manifest inspect / buildx imagetools inspect (2026-11-09):
+#        nvidia/cuda:13.0.3-devel-ubuntu24.04  index sha256:b7ae301dea2c162444795462ce17a05f6a516e5a75944b57af5b88540a1a2266
+#        nvidia/cuda:13.0.3-base-ubuntu24.04   index sha256:7c7413a56200486f71f181cad9310f6fd31b6bb21816ade15fc9c1e1e927a5c1
+#      (참고: K3 때 쓴 22.04 변형의 index digest 3869b846…/73ab6dfb… 는 07-29 와 11-09 가 같다 — 베이스 드리프트 없음.)
+#
+# ---- 설치 순서 (a100-kit/RUNBOOK.md §3 과 같은 순서, 핀 requirements 경로) ----------------------------------
+#   requirements/build/cuda.txt → requirements/cuda.txt → pip install -v . --no-build-isolation
+#   · 핀의 requirements/cuda.txt 에는 더 이상 --extra-index-url 줄이 없다(flashinfer-python==0.7.3 은 PyPI).
+#     PyPI 기본 wheel 이 cu13 이므로 별도 인덱스 없이 간다. 인덱스를 추가해야 하면
+#     --build-arg PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu130 (기본 빈 값).
+#   · `-v` 는 필수다: pip 는 -v 없이는 빌드 백엔드(cmake) 출력을 숨긴다. 아래 DeepGEMM·아치 gate 가
+#     그 출력(build-k31.log)을 grep 한다.
+#   · Rust frontend(vllm-rs): 설치하지 않는다. 핀 setup.py 는 이를 optional 로 취급하고(tools/build_rust.py
+#     optional=not VLLM_REQUIRE_RUST_FRONTEND) setuptools-rust 는 cargo 가 없으면 "can't find Rust compiler"
+#     를 출력하고 계속한다. 런타임에서도 VLLM_USE_RUST_FRONTEND 기본값이 0 이라 Python 프런트엔드를 쓴다.
+#
+# ---- DeepGEMM 은 SM80 단독 빌드에서 만들어지지 않는다 (gate 로 증명) -------------------------------------
+#   cmake/external_projects/deepgemm.cmake:93-97 cuda_archs_loose_intersection(DEEPGEMM_ARCHS …) 이 SM80 에서
+#   빈 값 → :201-203 message(STATUS "DeepGEMM will not compile: unsupported CUDA architecture …") + 빈 타깃.
+#   (소스 fetch 는 configure 때 항상 일어나므로 빌드 중 GitHub 접근이 필요하다.)
+#   FlashKDA 등 SM90+ 전용 확장도 같은 방식으로 "will not compile" 후 스킵된다 = 정상.
+# =============================================================================
+ARG CUDA_VERSION=13.0.3
+ARG UBUNTU_VERSION=24.04
+ARG PYTHON_VERSION=3.12
+# vLLM main 2026-11-09. main 은 force-push 되지 않으므로 pin 이 사라질 일은 없지만, 소실 시 빌드는 명확히 실패한다
+# (재현성 원칙: 새 head 폴백 없음. 드리프트 시 --build-arg VLLM_COMMIT=<새 해시> 로 명시 재지정 + 해시 기록).
+# ★ 전역 ARG: 스테이지 내 기본값은 다른 스테이지에 상속되지 않는다 → 전역 선언 + 각 스테이지 재선언으로 상속.
+ARG VLLM_COMMIT=a3c14efbc77c018e8bf579935095a87721349e05
+
+#################### 1) builder — vLLM SM80 소스빌드 (GPU 불필요) ####################
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG PYTHON_VERSION
+ARG VLLM_COMMIT
+# A100 전용. Marlin MoE 는 CMake 가 "8.0+PTX" 와 교집합을 취해 sm80 커널을 빌드한다(CMakeLists.txt:1445).
+ARG TORCH_CUDA_ARCH_LIST=8.0
+# 빌드 병렬 — setup.py 는 num_jobs = MAX_JOBS // NVCC_THREADS 로 ninja 잡 수를 정한다(기본 8//2 = 4 잡).
+# 개발 호스트 RAM 27GB 기준 nvcc 잡당 ~2GB(RUNBOOK §6) → 기본 8, build-k31.sh 가 가드.
+ARG MAX_JOBS=8
+ARG NVCC_THREADS=2
+ARG PIP_EXTRA_INDEX_URL=
+
+ENV DEBIAN_FRONTEND=noninteractive
+# devel 이미지에는 cuda-nvcc → build-essential(gcc/g++ 13.2)이 이미 있다. 명시적으로 확인하고 핀의 g++ >= 13 요구를
+# 빌드 첫머리에서 검사한다(실패 시 수 시간 뒤가 아니라 즉시 중단).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl git ca-certificates ccache build-essential \
+        python${PYTHON_VERSION} python${PYTHON_VERSION}-dev python${PYTHON_VERSION}-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && { g++ -dumpfullversion | awk -F. '{ exit !($1 >= 13) }' \
+         || { echo "g++ $(g++ -dumpfullversion) < 13 — 핀 CMakeLists.txt:1842 요구 위반" >&2; exit 1; }; }
+
+RUN python${PYTHON_VERSION} -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+
+# ---- 소스 확보 + 커밋 고정 (main 위의 단일 커밋 — 별도 PR ref fetch 없음) ----
+WORKDIR /src/vllm-k31
+RUN git clone https://github.com/vllm-project/vllm.git . \
+    && git checkout --detach "${VLLM_COMMIT}" \
+    && test "$(git rev-parse HEAD)" = "${VLLM_COMMIT}" \
+    && git rev-parse HEAD | tee /opt/VLLM_COMMIT.txt
+
+# ---- 의존성 (RUNBOOK §3 순서: build/cuda.txt → cuda.txt) + 빌드 전 조기 gate ----
+# 조기 gate: torch/cuda 계약이 어긋나면 수 시간짜리 소스빌드 전에 여기서 멈춘다.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -U pip \
+    && pip install -r requirements/build/cuda.txt \
+    && pip install -r requirements/cuda.txt ${PIP_EXTRA_INDEX_URL:+--extra-index-url "${PIP_EXTRA_INDEX_URL}"} \
+    && python - <<'PY'
+import subprocess
+import torch
+import torchvision
+
+assert torch.__version__.startswith("2.14.0"), f"torch {torch.__version__} != 2.14.0"
+assert (torch.version.cuda or "").startswith("13.0"), f"torch cuda {torch.version.cuda} != 13.0"
+assert torchvision.__version__.startswith("0.29.0"), f"torchvision {torchvision.__version__} != 0.29.0"
+nvcc = subprocess.check_output(["nvcc", "--version"], text=True)
+assert "release 13.0" in nvcc, f"nvcc != 13.0 (torch.version.cuda major 와 일치해야 함):\n{nvcc}"
+print("pre-build gate ok: torch", torch.__version__, "| cuda", torch.version.cuda,
+      "| torchvision", torchvision.__version__, "| nvcc 13.0")
+PY
+
+# ---- vLLM 본체 빌드 (소요: 16코어 MAX_JOBS=8 기준 수 시간 — 로그로 진행 확인) ----
+# pip -v: cmake configure/build 출력이 /opt/build-k31.log 에 남아야 아래 DeepGEMM·아치 gate 가 가능하다.
+ENV TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
+    MAX_JOBS=${MAX_JOBS} \
+    NVCC_THREADS=${NVCC_THREADS} \
+    CCACHE_DIR=/root/.cache/ccache
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/root/.cache/ccache \
+    pip install -v . --no-build-isolation 2>&1 | tee /opt/build-k31.log \
+    && gzip -9 /opt/build-k31.log \
+    && pip freeze > /opt/pip-freeze.txt
+
+# ---- 빌드 로그 gate (별도 RUN — 위 소스빌드 레이어를 다시 돌리지 않고 gate 만 고칠 수 있다) ----
+#  · 아치가 8.0 단독으로 설정되었는가
+#  · DEEPGEMM_ARCHS 가 비어 DeepGEMM 이 빌드되지 않았는가("will not compile" 만 있고 "CUDA architectures:" 는 없어야 함)
+RUN { zgrep -m2 -F 'CUDA target architectures' /opt/build-k31.log.gz || true; \
+      zgrep -m4 -F 'DeepGEMM' /opt/build-k31.log.gz || true; } \
+    && zgrep -Fq 'CUDA target architectures: 8.0' /opt/build-k31.log.gz \
+    && zgrep -Fq 'DeepGEMM will not compile: unsupported CUDA architecture' /opt/build-k31.log.gz \
+    && ! zgrep -Fq 'DeepGEMM CUDA architectures:' /opt/build-k31.log.gz \
+    && echo "build-log gate ok: arch=8.0 only, DeepGEMM not built"
+
+#################### 2) runtime — 산출물(/opt/venv)만 ####################
+FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu${UBUNTU_VERSION} AS runtime
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ARG CUDA_VERSION
+ARG PYTHON_VERSION
+ARG VLLM_COMMIT
+LABEL org.opencontainers.image.source="https://github.com/jimmylegendary/k3-sm80" \
+      org.opencontainers.image.description="k31-sm80 kernel-kit full tier: vLLM main a3c14efb (Kimi K3.1-Pro) SM80 source build + compute-sanitizer. Unpatched base for k31-sm80-openai; separate from the K3 kernelkit image." \
+      org.opencontainers.image.revision="vllm@${VLLM_COMMIT}" \
+      io.k3.cuda_arch="sm80"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# 시스템 패키지: vllm 공식 Dockerfile vllm-base 스테이지 목록의 부분집합
+#   (ffmpeg 등 미디어 계열은 커널 검증에 불필요 → 제외; 필요 시 apt 로 추가)
+# python3.12 는 24.04 기본 패키지다(venv 의 심링크 대상 /usr/bin/python3.12).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl git ca-certificates \
+        libsm6 libxext6 libgl1 libnuma-dev numactl \
+        python${PYTHON_VERSION} python${PYTHON_VERSION}-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# CUDA 런타임 JIT 도구(vllm 공식 vllm-base 목록: nvcc/cudart/nvrtc/cuobjdump/curand/cublas)
+# + cuda-sanitizer = compute-sanitizer (SANITIZER 게이트; env_check 가 /usr/local/cuda*/bin/compute-sanitizer 를 탐색한다).
+# cuda-nvcc-13-0 은 build-essential 에 의존하므로 gcc/g++ 도 함께 들어온다 = Triton/FlashInfer 런타임 JIT 의 C 컴파일러.
+RUN CUDA_VERSION_DASH=$(echo "${CUDA_VERSION}" | cut -d. -f1,2 | tr '.' '-') \
+    && apt-get update && apt-get install -y --no-install-recommends --allow-change-held-packages \
+        cuda-nvcc-${CUDA_VERSION_DASH} \
+        cuda-cudart-${CUDA_VERSION_DASH} \
+        cuda-nvrtc-${CUDA_VERSION_DASH} \
+        cuda-cuobjdump-${CUDA_VERSION_DASH} \
+        cuda-sanitizer-${CUDA_VERSION_DASH} \
+        libcurand-dev-${CUDA_VERSION_DASH} \
+        libcublas-dev-${CUDA_VERSION_DASH} \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /opt/venv /opt/venv
+COPY --from=build /opt/VLLM_COMMIT.txt /opt/build-k31.log.gz /opt/pip-freeze.txt /opt/vllm-build/
+
+# run_all.sh 는 PYTHON env 를 최우선으로 쓴다 → 컨테이너 python 을 명시 고정.
+# PATH 선두의 /opt/venv/bin 덕에 python3 폴백도 같은 인터프리터다.
+ENV PATH=/opt/venv/bin:$PATH \
+    PYTHON=/opt/venv/bin/python3
+
+# 빌드 게이트 (GPU 불필요한 검증만):
+#   vllm import + 컴파일된 C-확장(.so) 존재 + K3.1 코드(kimi_k3 모델 + DSA) 존재 + torch/cuda 버전 계약 + DeepGEMM 미빌드
+RUN python3 - <<'EOF'
+import glob, os, pathlib
+import torch, triton, vllm
+
+assert torch.__version__.startswith("2.14.0"), f"torch {torch.__version__} != 2.14.0"
+assert (torch.version.cuda or "").startswith("13.0"), f"torch cuda {torch.version.cuda} != 13.0"
+base = pathlib.Path(os.path.dirname(vllm.__file__))
+sos = glob.glob(str(base / "**" / "*.so"), recursive=True)
+assert sos, "vllm 컴파일 확장(.so) 0건 — 소스빌드 실패 의심"
+names = {pathlib.Path(p).name for p in sos}
+for need in ("_C_stable_libtorch.abi3.so", "_moe_C_stable_libtorch.abi3.so"):
+    assert need in names, f"{need} 없음 — 확장 빌드 누락"
+assert (base / "models" / "kimi_k3" / "__init__.py").is_file(), "vllm/models/kimi_k3 없음 — pin 확인"
+# K3.1 코드 증명: DSA(indexer) 층 구현은 K3.1 분할(1/6~3/6) 이후 main 에만 있다.
+assert (base / "models" / "kimi_k3" / "nvidia" / "dsa.py").is_file(), \
+    "vllm/models/kimi_k3/nvidia/dsa.py 없음 — K3.1(DSA) 이전 커밋 의심"
+assert not glob.glob(str(base / "third_party" / "deep_gemm" / "_C_extension*.so")), \
+    "DeepGEMM _C_extension 이 빌드되었다 — SM80 단독 빌드에서는 없어야 한다"
+commit = pathlib.Path("/opt/vllm-build/VLLM_COMMIT.txt").read_text().strip()
+assert commit == os.environ["VLLM_COMMIT"], f"VLLM_COMMIT.txt {commit} != {os.environ['VLLM_COMMIT']}"
+print("gate ok:", "vllm", vllm.__version__, "| torch", torch.__version__,
+      "| triton", triton.__version__, "| .so", len(sos), "| commit", commit[:8])
+EOF
+RUN compute-sanitizer --version || ls /usr/local/cuda*/bin/compute-sanitizer
+
+WORKDIR /work
+CMD ["bash"]

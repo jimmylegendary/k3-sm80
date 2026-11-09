@@ -1,0 +1,621 @@
+k31-sm80-dsa-glue.patch -- Kimi K3.1 DSA의 SM80(A100) glue (Triton fp8e4nv 경로를 stock CUDA op로 대체)
+==========================================================================================================
+
+대상      : vLLM a3c14efbc77c018e8bf579935095a87721349e05 위에 triton-mla-sparse-sm80.patch 를 적용한 상태 (파일 집합은 겹치지 않아 단독 적용도 가능)
+적용 순서 : mxfp4-marlin-moe-sm80-main.patch -> triton-mla-sparse-sm80.patch -> 이 패치
+내용      : vllm/models/kimi_k3/nvidia/dsa.py -- use_sm80_dsa() (GPU capability < 89 자동 판정, 환경변수
+            VLLM_K31_SM80_DSA=1/0 은 강제 켬/끔 디버그 override). SM80이면 (1) use_fused_k_insert=False로 index-K를
+            stock CUDA indexer_k_quant_and_cache에 맡기고(fp32 LayerNorm 선행 유지), (2) Q를 CUDA
+            per_token_group_quant_fp8(ue8m0)로 양자화해 head별 scale을 weights에 접는다. MXFP4 index 캐시와
+            DCP/PCP 조합은 명시적 NotImplementedError. dsa_fused_prologue는 fp8_ds_mla에서만 도달 -> bf16에서는 불가.
+            vllm/envs.py -- override env 등록(미등록 VLLM_* 는 validate_environ 경고 대상).
+범위      : P1 = bf16 KV, enforce_eager, max_num_seqs 1. FP8 KV·CUDA graph는 P2/P3.
+
+(이 머리글은 `git apply` 가 무시한다 -- 첫 번째 "diff --git" 줄 앞의 텍스트는 버려진다.)
+
+diff --git a/tests/models/kimi_k3/test_dsa_sm80.py b/tests/models/kimi_k3/test_dsa_sm80.py
+new file mode 100644
+index 0000000000..00130628a5
+--- /dev/null
++++ b/tests/models/kimi_k3/test_dsa_sm80.py
+@@ -0,0 +1,127 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Kimi K3.1 DSA의 SM80(A100) glue 테스트.
++
++`use_sm80_dsa()`의 capability 자동 판정/환경변수 override와, Triton fp8e4nv 없이
++CUDA `per_token_group_quant_fp8`로 query를 양자화하는 `_sm80_q_quant_fold_weights`가
++`indexer_q_quant_fold_weights`와 같은 수식(ue8m0 scale, 접힌 fp32 weights)인지 본다.
++"""
++
++from types import SimpleNamespace
++
++import pytest
++import torch
++
++from vllm.models.kimi_k3.nvidia.dsa import KimiK3DSAIndexer, use_sm80_dsa
++from vllm.platforms import current_platform
++
++HEAD_DIM = 128
++FP8_MAX = 448.0
++
++
++@pytest.fixture
++def fake_cuda(monkeypatch):
++    """GPU 없이 `use_sm80_dsa`의 capability 분기를 시험하는 플랫폼 스텁."""
++
++    def install(capability: int, *, cuda: bool = True) -> None:
++        monkeypatch.setattr(current_platform, "is_cuda", lambda: cuda)
++        monkeypatch.setattr(
++            current_platform,
++            "has_device_capability",
++            lambda required, device_id=0: capability >= required,
++        )
++
++    monkeypatch.delenv("VLLM_K31_SM80_DSA", raising=False)
++    return install
++
++
++@pytest.mark.parametrize(
++    "capability,expected",
++    [(75, True), (80, True), (86, True), (89, False), (90, False), (100, False)],
++)
++def test_auto_detection_follows_capability(fake_cuda, capability, expected):
++    fake_cuda(capability)
++    assert use_sm80_dsa() is expected
++
++
++def test_not_cuda_is_never_sm80(fake_cuda):
++    fake_cuda(80, cuda=False)
++    assert use_sm80_dsa() is False
++
++
++@pytest.mark.parametrize("capability", [80, 90])
++def test_env_forces_on_and_off(fake_cuda, monkeypatch, capability):
++    fake_cuda(capability)
++    monkeypatch.setenv("VLLM_K31_SM80_DSA", "1")
++    assert use_sm80_dsa() is True
++    monkeypatch.setenv("VLLM_K31_SM80_DSA", "0")
++    assert use_sm80_dsa() is False
++    # 알 수 없는 값은 미설정과 같다(자동 판정).
++    monkeypatch.setenv("VLLM_K31_SM80_DSA", "maybe")
++    assert use_sm80_dsa() is (capability < 89)
++
++
++def test_env_is_registered_with_vllm_envs(monkeypatch):
++    """미등록 VLLM_* 환경변수는 `validate_environ`이 경고/실패 처리한다."""
++    import vllm.envs as envs
++
++    assert "VLLM_K31_SM80_DSA" in envs.environment_variables
++    monkeypatch.delenv("VLLM_K31_SM80_DSA", raising=False)
++    assert envs.VLLM_K31_SM80_DSA is None
++    monkeypatch.setenv("VLLM_K31_SM80_DSA", "1")
++    assert envs.VLLM_K31_SM80_DSA is True
++
++
++@pytest.mark.skipif(not current_platform.is_cuda(), reason="CUDA quant op needed")
++@pytest.mark.parametrize("num_heads", [32, 20])
++@pytest.mark.parametrize("num_tokens", [1, 33, 300])
++@torch.inference_mode()
++def test_sm80_q_quant_fold_weights_matches_formula(num_heads, num_tokens):
++    torch.manual_seed(0)
++    padded = 32
++    q = torch.randn(
++        num_tokens, num_heads, HEAD_DIM, dtype=torch.bfloat16, device="cuda"
++    )
++    q[0, 0].zero_()  # 모든 원소가 0인 그룹: amax 하한(eps)을 밟는다.
++    kw = torch.randn(
++        num_tokens, HEAD_DIM + num_heads, dtype=torch.bfloat16, device="cuda"
++    )
++    w = kw[:, HEAD_DIM:]
++    weight_scale = HEAD_DIM**-0.5 * num_heads**-0.5
++
++    fake_self = SimpleNamespace(padded_index_num_heads=padded)
++    q_fp8, weights = KimiK3DSAIndexer._sm80_q_quant_fold_weights(
++        fake_self, q, w, weight_scale
++    )
++
++    # 독립 기준 수식 (indexer_q_quant_fold_weights의 Triton 커널과 같은 수식)
++    amax = q.float().abs().amax(dim=-1).clamp_min(1e-10)
++    scale = torch.exp2(torch.ceil(torch.log2((amax / FP8_MAX).clamp_min(1e-10))))
++    ref_fp8 = (
++        (q.float() / scale[..., None])
++        .clamp(-FP8_MAX, FP8_MAX)
++        .to(current_platform.fp8_dtype())
++    )
++    ref_weights = w.float() * scale * weight_scale
++
++    assert q_fp8.dtype == current_platform.fp8_dtype()
++    assert q_fp8.shape == (num_tokens, padded, HEAD_DIM)
++    assert weights.shape == (num_tokens, padded)
++    assert weights.dtype == torch.float32
++    assert torch.equal(
++        q_fp8[:, :num_heads].view(torch.uint8), ref_fp8.view(torch.uint8)
++    )
++    torch.testing.assert_close(weights[:, :num_heads], ref_weights)
++    if padded != num_heads:
++        assert torch.count_nonzero(q_fp8[:, num_heads:].view(torch.uint8)) == 0
++        assert torch.count_nonzero(weights[:, num_heads:]) == 0
++
++
++@pytest.mark.skipif(not current_platform.is_cuda(), reason="CUDA quant op needed")
++def test_sm80_q_quant_handles_empty_batch():
++    fake_self = SimpleNamespace(padded_index_num_heads=32)
++    q = torch.empty(0, 32, HEAD_DIM, dtype=torch.bfloat16, device="cuda")
++    w = torch.empty(0, 32, dtype=torch.bfloat16, device="cuda")
++    q_fp8, weights = KimiK3DSAIndexer._sm80_q_quant_fold_weights(fake_self, q, w, 0.5)
++    assert q_fp8.shape == (0, 32, HEAD_DIM)
++    assert weights.shape == (0, 32)
+diff --git a/tests/models/kimi_k3/test_dsa_sm80_indexer.py b/tests/models/kimi_k3/test_dsa_sm80_indexer.py
+new file mode 100644
+index 0000000000..bf327414f7
+--- /dev/null
++++ b/tests/models/kimi_k3/test_dsa_sm80_indexer.py
+@@ -0,0 +1,271 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Kimi K3.1 DSA indexer 전체 경로의 SM80(A100) 검증.
++
++`KimiK3DSAIndexer.score`가 SM80 glue(`use_sm80_dsa`)로 도는 경로를 그대로 탄다:
++CUDA `per_token_group_quant_fp8` Q 양자화 -> `sparse_attn_indexer`가 stock CUDA
++`indexer_k_quant_and_cache`로 key 삽입 -> Triton MQA logits(DeepGEMM 없음) ->
++top-k. 결과 top-k를 fp8 캐시를 역양자화한 fp32 기준 구현과 비교한다.
++SM90/SM100(DeepGEMM 지원)에서는 Triton 분기를 타지 않으므로 건너뛴다.
++
++실행(vLLM 테스트 의존성 없이): `python -m pytest --noconftest -p no:cacheprovider \
++tests/models/kimi_k3/test_dsa_sm80_indexer.py`.
++"""
++
++import functools
++from types import SimpleNamespace
++
++import pytest
++import torch
++
++import vllm.model_executor.layers.sparse_attn_indexer as sparse_indexer
++from vllm import _custom_ops as ops
++from vllm.config import CUDAGraphMode
++from vllm.models.kimi_k3.nvidia.dsa import KimiK3DSAIndexer
++from vllm.platforms import current_platform
++from vllm.utils.deep_gemm import is_deep_gemm_supported
++from vllm.v1.attention.backends.mla.indexer import (
++    DeepSeekV32IndexerDecodeMetadata,
++    DeepseekV32IndexerMetadata,
++    DeepseekV32IndexerPrefillChunkMetadata,
++    DeepseekV32IndexerPrefillMetadata,
++)
++
++pytestmark = pytest.mark.skipif(
++    not current_platform.is_cuda() or is_deep_gemm_supported(),
++    reason="SM80 Triton indexer fallback (CUDA without DeepGEMM)",
++)
++
++HEAD_DIM = 128
++NUM_HEADS = 32
++ENTRY = HEAD_DIM + 4  # fp8 값 + token당 fp32 scale 1개
++BLOCK = 64
++TOPK = 2048
++# packed hybrid KV row 안의 한 layer 페이지처럼 block stride를 크게 둔다:
++# block >= 1024에서 `block * stride`가 2**31 바이트를 넘는다.
++ROW_STRIDE = 2**21
++PREFIX = "model.layers.3.self_attn.indexer.k_cache"
++
++
++@pytest.fixture
++def workspace_init():
++    """루트 conftest 없이(`--noconftest`)도 도는 workspace manager 초기화."""
++    from vllm.v1.worker.workspace import (
++        init_workspace_manager,
++        reset_workspace_manager,
++    )
++
++    init_workspace_manager(torch.device("cuda"))
++    yield
++    reset_workspace_manager()
++
++
++def _make_cache(num_blocks: int, strided: bool) -> torch.Tensor:
++    """Indexer 캐시 view `[num_blocks, BLOCK, ENTRY]` (uint8)."""
++    if not strided:
++        return torch.zeros(num_blocks, BLOCK, ENTRY, dtype=torch.uint8, device="cuda")
++    raw = torch.zeros(num_blocks * ROW_STRIDE, dtype=torch.uint8, device="cuda")
++    return torch.as_strided(
++        raw, size=(num_blocks, BLOCK, ENTRY), stride=(ROW_STRIDE, ENTRY, 1)
++    )
++
++
++def _dequant(view: torch.Tensor) -> torch.Tensor:
++    """캐시 전체를 `[num_blocks * BLOCK, HEAD_DIM]` fp32로 역양자화한다."""
++    rows = []
++    for b in range(view.shape[0]):
++        flat = view[b].reshape(-1)
++        data = flat[: BLOCK * HEAD_DIM].view(current_platform.fp8_dtype())
++        data = data.view(BLOCK, HEAD_DIM).float()
++        scale = flat[BLOCK * HEAD_DIM : BLOCK * ENTRY].contiguous().view(torch.float32)
++        rows.append(data * scale[:, None])
++    return torch.cat(rows)
++
++
++def _make_indexer(cache, topk_buffer, max_model_len) -> SimpleNamespace:
++    indexer = SimpleNamespace(
++        use_fp4_cache=False,
++        use_sm80_dsa=True,
++        index_softmax_scale=HEAD_DIM**-0.5,
++        indexer_weight_scale=NUM_HEADS**-0.5,
++        padded_index_num_heads=NUM_HEADS,
++        k_cache=SimpleNamespace(prefix=PREFIX, kv_cache=cache),
++        quant_block_size=HEAD_DIM,
++        scale_fmt="ue8m0",
++        topk_tokens=TOPK,
++        index_head_dim=HEAD_DIM,
++        max_model_len=max_model_len,
++        max_total_seq_len=max_model_len,
++        topk_indices_buffer=topk_buffer,
++        use_fused_k_insert=False,
++        use_pcp=False,
++        _parallel_config=SimpleNamespace(pcp_shard_decode_requests=False),
++        dense_mha_metadata_layer_name="",
++        dcp_rank=0,
++        dcp_world_size=1,
++        cp_kv_cache_interleave_size=1,
++        topk_backend="auto",
++    )
++    indexer._sm80_q_quant_fold_weights = functools.partial(
++        KimiK3DSAIndexer._sm80_q_quant_fold_weights, indexer
++    )
++    return indexer
++
++
++def _logits_ref(q_deq: torch.Tensor, w: torch.Tensor, k_deq: torch.Tensor):
++    """sum_h relu(q_h . k) * w_h  for every (row, key)."""
++    return (torch.einsum("thd,nd->thn", q_deq, k_deq).relu() * w[..., None]).sum(1)
++
++
++def _quantized_q(indexer, q, w):
++    """score()가 쓰는 Q 양자화를 그대로 적용해 기준 구현의 입력을 만든다."""
++    weight_scale = indexer.index_softmax_scale * indexer.indexer_weight_scale
++    q_fp8, weights = indexer._sm80_q_quant_fold_weights(q, w, weight_scale)
++    return q_fp8.float(), weights
++
++
++@pytest.mark.parametrize("strided", [False, True], ids=["contiguous", "big-stride"])
++@torch.inference_mode()
++def test_decode_topk_matches_reference(
++    monkeypatch: pytest.MonkeyPatch, workspace_init, strided: bool
++):
++    """decode: 요청당 query 1개가 자기 컨텍스트에서 고른 top-k가 기준과 같다."""
++    torch.manual_seed(0)
++    seq_lens = torch.tensor([1000, 3000, 6100, 4500], device="cuda").int()
++    batch = seq_lens.shape[0]
++    max_blocks = (int(seq_lens.max()) + BLOCK - 1) // BLOCK
++    # big-stride: block id가 1024를 넘어야 int32 오프셋이 wrap하는 구간을 밟는다.
++    num_blocks = 1100 if strided else batch * max_blocks + 1
++    perm = torch.randperm(num_blocks, device="cuda").int()
++    block_table = perm[: batch * max_blocks].view(batch, max_blocks).contiguous()
++    req = torch.repeat_interleave(torch.arange(batch, device="cuda"), seq_lens.long())
++    pos = torch.cat([torch.arange(n, device="cuda") for n in seq_lens.tolist()])
++    slots = block_table[req, pos // BLOCK].long() * BLOCK + pos % BLOCK
++
++    cache = _make_cache(num_blocks, strided)
++    k_all = torch.randn(slots.shape[0], HEAD_DIM, dtype=torch.bfloat16, device="cuda")
++    # 이전 step들이 이미 쌓은 캐시: stock CUDA op (use_fused_k_insert=False 경로).
++    ops.indexer_k_quant_and_cache(k_all, cache, slots, HEAD_DIM, "ue8m0")
++
++    topk = torch.full((batch, TOPK), -1, dtype=torch.int32, device="cuda")
++    indexer = _make_indexer(cache, topk, max_blocks * BLOCK)
++    context_lens = seq_lens.view(-1, 1).contiguous()
++    last = torch.cumsum(seq_lens.long(), 0) - 1  # 각 요청의 마지막 토큰 = decode 토큰
++    metadata = DeepseekV32IndexerMetadata(
++        seq_lens=seq_lens,
++        max_seq_len=int(seq_lens.max()),
++        slot_mapping=slots[last].contiguous(),
++        num_decodes=batch,
++        num_decode_tokens=batch,
++        num_prefills=0,
++        num_prefill_tokens=0,
++        decode=DeepSeekV32IndexerDecodeMetadata(
++            block_table=block_table,
++            seq_lens=context_lens,
++            decode_lens=torch.ones(batch, dtype=torch.int32, device="cuda"),
++            requires_padding=False,
++            schedule_metadata=torch.zeros(1, 2, dtype=torch.int32, device="cuda"),
++        ),
++    )
++    monkeypatch.setattr(
++        sparse_indexer,
++        "get_forward_context",
++        lambda: SimpleNamespace(
++            attn_metadata={PREFIX: metadata},
++            cudagraph_runtime_mode=CUDAGraphMode.NONE,
++        ),
++    )
++    q = torch.randn(batch, NUM_HEADS, HEAD_DIM, dtype=torch.bfloat16, device="cuda")
++    w = torch.randn(batch, NUM_HEADS, dtype=torch.bfloat16, device="cuda")
++    hidden_states = torch.empty(batch, 16, dtype=torch.bfloat16, device="cuda")
++    # score()는 decode 토큰의 key를 op 안에서 다시 삽입한다(같은 값, 멱등).
++    KimiK3DSAIndexer.score(indexer, hidden_states, q, w, k_all[last])
++
++    q_deq, weights = _quantized_q(indexer, q, w)
++    k_deq = _dequant(cache)
++    for b, n in enumerate(seq_lens.tolist()):
++        keys = k_deq[slots[req == b]]
++        ref = _logits_ref(q_deq[b : b + 1], weights[b : b + 1], keys)[0]
++        got = topk[b][topk[b] >= 0]
++        assert got.numel() == min(n, TOPK) and int(got.max()) < n, b
++        if n <= TOPK:
++            assert torch.equal(got.sort().values, torch.arange(n, device="cuda"))
++            continue
++        # bf16 곱 + fp32 누적(Triton) vs fp32 기준: 컷 경계의 near-tie만 다를 수 있다.
++        recall = torch.isin(got, ref.topk(TOPK).indices).float().mean().item()
++        assert recall > 0.99, (b, recall)
++
++
++@torch.inference_mode()
++def test_prefill_topk_matches_reference(
++    monkeypatch: pytest.MonkeyPatch, workspace_init
++):
++    """prefill: 한 요청의 모든 토큰이 causal 구간에서 고른 top-k가 기준과 같다."""
++    torch.manual_seed(1)
++    length = 2600  # index_topk(2048)를 넘는 행이 실제 선택을 한다.
++    max_blocks = (length + BLOCK - 1) // BLOCK
++    num_blocks = max_blocks + 3
++    block_table = (
++        torch.randperm(num_blocks, device="cuda")[:max_blocks]
++        .int()
++        .view(1, max_blocks)
++        .contiguous()
++    )
++    pos = torch.arange(length, device="cuda")
++    slots = block_table[0, pos // BLOCK].long() * BLOCK + pos % BLOCK
++
++    cache = _make_cache(num_blocks, strided=False)
++    k = torch.randn(length, HEAD_DIM, dtype=torch.bfloat16, device="cuda")
++    topk = torch.full((length, TOPK), 7, dtype=torch.int32, device="cuda")
++    indexer = _make_indexer(cache, topk, max_blocks * BLOCK)
++    cu_seq_lens = torch.tensor([0, length], dtype=torch.int32, device="cuda")
++    chunk = DeepseekV32IndexerPrefillChunkMetadata(
++        block_table=block_table,
++        cu_seqlen_ks=torch.zeros(length, dtype=torch.int32, device="cuda"),
++        cu_seqlen_ke=torch.arange(1, length + 1, dtype=torch.int32, device="cuda"),
++        cu_seq_lens=cu_seq_lens,
++        token_to_seq=torch.zeros(length, dtype=torch.int32, device="cuda"),
++        total_seq_lens=length,
++        max_seqlen_k=length,
++        token_start=0,
++        token_end=length,
++        num_reqs=1,
++        local_cu_seq_lens=cu_seq_lens,
++        local_total_seq_lens=length,
++        max_local_total_seq_lens=length,
++    )
++    metadata = DeepseekV32IndexerMetadata(
++        seq_lens=torch.tensor([length], dtype=torch.int32, device="cuda"),
++        max_seq_len=length,
++        slot_mapping=slots.contiguous(),
++        num_decodes=0,
++        num_decode_tokens=0,
++        num_prefills=1,
++        num_prefill_tokens=length,
++        prefill=DeepseekV32IndexerPrefillMetadata(chunks=[chunk]),
++    )
++    monkeypatch.setattr(
++        sparse_indexer,
++        "get_forward_context",
++        lambda: SimpleNamespace(
++            attn_metadata={PREFIX: metadata},
++            cudagraph_runtime_mode=CUDAGraphMode.NONE,
++        ),
++    )
++    q = torch.randn(length, NUM_HEADS, HEAD_DIM, dtype=torch.bfloat16, device="cuda")
++    w = torch.randn(length, NUM_HEADS, dtype=torch.bfloat16, device="cuda")
++    hidden_states = torch.empty(length, 16, dtype=torch.bfloat16, device="cuda")
++    KimiK3DSAIndexer.score(indexer, hidden_states, q, w, k)
++
++    q_deq, weights = _quantized_q(indexer, q, w)
++    k_deq = _dequant(cache)[slots]  # 토큰 순서의 역양자화된 key
++    for row in (0, 1, 100, 2046, 2047, 2048, 2300, length - 1):
++        n = row + 1  # row i는 key [0, i]를 본다.
++        ref = _logits_ref(q_deq[row : row + 1], weights[row : row + 1], k_deq[:n])[0]
++        got = topk[row][topk[row] >= 0]
++        assert got.numel() == min(n, TOPK) and int(got.max()) < n, row
++        if n <= TOPK:
++            assert torch.equal(got.sort().values, torch.arange(n, device="cuda"))
++            continue
++        recall = torch.isin(got, ref.topk(TOPK).indices).float().mean().item()
++        assert recall > 0.99, (row, recall)
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 2aed85f5b5..4b4a1de602 100644
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -60,6 +60,7 @@ if TYPE_CHECKING:
+     VLLM_XLA_CACHE_PATH: str = os.path.join(VLLM_CACHE_ROOT, "xla_cache")
+     VLLM_XLA_CHECK_RECOMPILATION: bool = False
+     VLLM_USE_FUSED_MQA_TOPK: bool = True
++    VLLM_K31_SM80_DSA: bool | None = None
+     VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: int = 512
+     VLLM_SPARSE_INDEXER_MAX_DECODE_LOGITS_MB: int = 2048
+     VLLM_ADAPTIVE_VERIFICATION_PROFILE_CONTEXT_LEN: int = 8192
+@@ -1143,6 +1144,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_USE_FUSED_MQA_TOPK": lambda: bool(
+         int(os.getenv("VLLM_USE_FUSED_MQA_TOPK", "1"))
+     ),
++    # Kimi-K3.1 DSA의 SM80(A100) 경로(stock CUDA op로 index-K 삽입, CUDA op로 Q
++    # 양자화): 미설정이면 GPU capability로 자동 판정(SM89 미만이면 켬), ``1``은
++    # 강제 켬, ``0``은 강제 끔. 디버그용 override이며 기본 사용은 자동 판정이다.
++    "VLLM_K31_SM80_DSA": lambda: {"1": True, "0": False}.get(
++        os.getenv("VLLM_K31_SM80_DSA", "").strip()
++    ),
+     # Maximum size (in MB) for logits tensor in sparse MLA indexer prefill chunks.
+     # Bounds the [M, N] float32 logits tensor to prevent CUDA OOM.
+     # Default: 512 MB
+diff --git a/vllm/models/kimi_k3/nvidia/dsa.py b/vllm/models/kimi_k3/nvidia/dsa.py
+index c82250984e..f84a390aae 100644
+--- a/vllm/models/kimi_k3/nvidia/dsa.py
++++ b/vllm/models/kimi_k3/nvidia/dsa.py
+@@ -18,6 +18,7 @@ import torch
+ import torch.nn.functional as F
+ from torch import nn
+ 
++import vllm.envs as envs
+ from vllm.config import CacheConfig, CUDAGraphMode, VllmConfig, get_current_vllm_config
+ from vllm.distributed import get_dcp_group, get_tensor_model_parallel_world_size
+ from vllm.forward_context import get_forward_context
+@@ -35,6 +36,9 @@ from vllm.model_executor.layers.mla import (
+     MultiHeadLatentAttentionWrapper,
+ )
+ from vllm.model_executor.layers.quantization import QuantizationConfig
++from vllm.model_executor.layers.quantization.utils.fp8_utils import (
++    per_token_group_quant_fp8,
++)
+ from vllm.model_executor.layers.rotary_embedding import get_rope
+ from vllm.model_executor.utils import is_weights_pre_processed
+ from vllm.models.kimi_k3.common.dsa_cache import (
+@@ -81,6 +85,23 @@ def yarn_get_mscale(scale: float = 1, mscale: float = 1) -> float:
+     return 0.1 * mscale * math.log(scale) + 1.0
+ 
+ 
++def use_sm80_dsa() -> bool:
++    """DSA indexer를 FP8 네이티브 경로가 없는 GPU(A100 = SM80/SM86)용으로 돌릴지.
++
++    기본은 GPU capability 자동 판정(SM89 미만이면 True)이고, 환경변수
++    `VLLM_K31_SM80_DSA`가 1/0이면 강제 켬/끔(디버그)이다. 켜지면 indexer는
++    (1) key를 fused Triton `tl.float8e4nv` 삽입 대신 stock CUDA
++    `ops.indexer_k_quant_and_cache`로 쓰고(fp32 LayerNorm 선행), (2) query를
++    Triton `tl.float8e4nv` 대신 CUDA `per_token_group_quant_fp8`로 양자화한다.
++    logits는 `sparse_attn_indexer`가 DeepGEMM 지원 여부(`is_deep_gemm_supported`)로
++    따로 고른다: SM80에서는 Triton MQA logits.
++    """
++    forced = envs.VLLM_K31_SM80_DSA
++    if forced is not None:
++        return forced
++    return current_platform.is_cuda() and not current_platform.has_device_capability(89)
++
++
+ class KimiK3DSAIndexerKNorm(nn.Module):
+     """Bias-full fp32 LayerNorm for the DSA indexer shared key.
+ 
+@@ -217,11 +238,21 @@ class KimiK3DSAIndexer(nn.Module):
+         # Set by KimiK3DSAAttention to skip scoring dense-MHA prefills.
+         self.dense_mha_metadata_layer_name = ""
+         self.topk_backend = vllm_config.kernel_config.sparse_indexer_topk_backend
+-        # PCP gathers the unquantized key inside the op.
++        self.use_sm80_dsa = use_sm80_dsa()
++        if self.use_sm80_dsa and self.use_fp4_cache:
++            raise NotImplementedError(
++                "MXFP4 indexer keys (indexer_kv_dtype='mxfp4') need SM10x; on "
++                "SM80 use the default FP8 index cache."
++            )
++        # PCP gathers the unquantized key inside the op. SM80은 fused Triton 삽입이
++        # fp8e4nv(SM89+)라 항상 끄고, op가 stock CUDA `indexer_k_quant_and_cache`로
++        # 쓴다 (`skip_k_cache_insert=False`; k는 아래 `k_index_norm`으로 fp32
++        # LayerNorm 후 bf16).
+         self.use_fused_k_insert = (
+             not self.use_pcp
+             and index_k_norm_type == "layernorm"
+             and index_rope_dim == 0
++            and not self.use_sm80_dsa
+         )
+         if self.use_fp4_cache and not self.use_fused_k_insert:
+             raise NotImplementedError("MXFP4 indexer keys need the fused key insert")
+@@ -230,6 +261,10 @@ class KimiK3DSAIndexer(nn.Module):
+         # passed through (sparse_attn_indexer.py:_merge_dcp_topk_global).
+         self._parallel_config = vllm_config.parallel_config
+         self.dcp_world_size = self._parallel_config.decode_context_parallel_size
++        if self.use_sm80_dsa and (self.dcp_world_size > 1 or self.use_pcp):
++            raise NotImplementedError(
++                "Kimi-K3.1 DSA on SM80 (Triton MQA logits) does not support DCP/PCP."
++            )
+         self.dcp_rank = get_dcp_group().rank_in_group if self.dcp_world_size > 1 else 0
+         self._cp_kv_cache_interleave_size: int | None = None
+         # The specialized decode merges each rank's packed local top-N in one
+@@ -349,6 +384,9 @@ class KimiK3DSAIndexer(nn.Module):
+             self._fused_k_insert(index_k, hidden_states.shape[0])
+             index_k = None
+         else:
++            # SM80(use_sm80_dsa)은 항상 이 비-fused 경로다: fp32 LayerNorm 뒤 bf16 key를
++            # op가 CUDA `indexer_k_quant_and_cache`로 삽입한다. K3.1은
++            # index_rope_dim == 0(indexer NoPE)이라 아래 RoPE 분기를 건너뛴다.
+             index_k = self.k_index_norm(index_k)
+             if self.index_rope_dim > 0:
+                 assert positions is not None and rotary_emb is not None, (
+@@ -361,6 +399,50 @@ class KimiK3DSAIndexer(nn.Module):
+                 )
+         return self.score(hidden_states, index_q, index_weights, index_k)
+ 
++    def _sm80_q_quant_fold_weights(
++        self,
++        index_q: torch.Tensor,
++        index_weights: torch.Tensor,
++        weight_scale: float,
++    ) -> tuple[torch.Tensor, torch.Tensor]:
++        """`indexer_q_quant_fold_weights`의 SM80 대체 (Triton fp8e4nv 없이).
++
++        같은 수식을 CUDA op로 계산한다: query `[T, H, D]`를 head별 ue8m0 scale
++        (eps 1e-10, `scale_fmt`와 같은 power-of-2)로 fp8(e4m3) 양자화하고, 각 head의
++        scale을 `index_weights`와 `weight_scale`에 접어 fp32 weights로 돌려준다.
++        Q를 bf16 그대로 두지 않고 fp8로 양자화하는 이유: `sparse_attn_indexer`의
++        계약(fp8 q_quant + 접힌 weights)과 K 캐시(fp8)를 DeepGEMM 경로와 똑같이
++        두어 top-k 경계가 SM90/SM100과 같은 양자화 오차를 갖게 하기 위함이다.
++        `-> (q_fp8 [T, P, D], weights [T, P] fp32)`, P = padded_index_num_heads;
++        head `[H, P)`는 0.
++        """
++        num_tokens, num_heads, head_dim = index_q.shape
++        padded = self.padded_index_num_heads
++        fp8_dtype = current_platform.fp8_dtype()
++        if num_tokens == 0:
++            return (
++                torch.empty(
++                    (0, padded, head_dim), dtype=fp8_dtype, device=index_q.device
++                ),
++                torch.empty((0, padded), dtype=torch.float32, device=index_q.device),
++            )
++        # 한 (token, head) 행이 한 양자화 그룹이다. 비연속 입력은 Triton 폴백(fp8e4nv)
++        # 으로 빠지므로 contiguous를 보장한다.
++        q_fp8, q_scale = per_token_group_quant_fp8(
++            index_q.reshape(-1, head_dim).contiguous(), head_dim, use_ue8m0=True
++        )
++        folded = (
++            index_weights.float() * q_scale.view(num_tokens, num_heads) * weight_scale
++        )
++        q_fp8 = q_fp8.view(num_tokens, num_heads, head_dim)
++        if padded == num_heads:
++            return q_fp8, folded
++        q_padded = q_fp8.new_zeros((num_tokens, padded, head_dim))
++        q_padded[:, :num_heads] = q_fp8
++        weights = folded.new_zeros((num_tokens, padded))
++        weights[:, :num_heads] = folded
++        return q_padded, weights
++
+     def score(
+         self,
+         hidden_states: torch.Tensor,
+@@ -376,6 +458,10 @@ class KimiK3DSAIndexer(nn.Module):
+             q_quant, q_scale, weights = mxfp4_q_quant(
+                 index_q, index_weights, weight_scale, self.padded_index_num_heads
+             )
++        elif self.use_sm80_dsa:
++            q_quant, weights = self._sm80_q_quant_fold_weights(
++                index_q, index_weights, weight_scale
++            )
+         else:
+             q_quant, weights = indexer_q_quant_fold_weights(
+                 index_q, index_weights, weight_scale, self.padded_index_num_heads
+@@ -703,6 +789,9 @@ class KimiK3DSAAttention(nn.Module):
+             return
+         attn = cast(Any, self.mla_attn.mla_attn)
+         indexer = cast(Any, self.dsa_indexer)
++        # fused 전방 경로(`dsa_fused_prologue`, Triton fp8e4nv)는 fp8_ds_mla KV 캐시와
++        # fused key 삽입이 모두 필요하다. SM80(bf16 KV, use_sm80_dsa)은 두 조건이 다
++        # 거짓이라 여기서 항상 반환하고 `self._packed`가 None이다 -> wrapper forward.
+         if not (
+             indexer.use_fused_k_insert
+             and indexer.dcp_world_size == 1
+@@ -768,6 +857,8 @@ class KimiK3DSAAttention(nn.Module):
+     def _fused_attention(self, hidden_states: torch.Tensor) -> torch.Tensor:
+         assert self.q_lora_rank is not None and self._packed is not None
+         indexer = self.dsa_indexer
++        # SM80(bf16 KV)은 pack_projections에서 걸러져 여기에 오지 않는다.
++        assert not indexer.use_sm80_dsa, "fused DSA prologue needs fp8e4nv (SM89+)"
+         attn = cast(Any, self.mla_attn.mla_attn)
+         input_weight, query_weight = self._packed
+         q_c, kv_c, k_pe, index_k, index_weights = low_latency_linear(

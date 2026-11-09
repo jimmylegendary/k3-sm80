@@ -76,7 +76,16 @@ VLLM_KEYS = frozenset(
     }
 )
 
+# lane 01-05(K3)의 필수 키 집합. K3 .env는 정확히 이 키들만 가진다.
 ALLOWED_KEYS = COMMON_KEYS | VLLM_KEYS
+
+# K3.1 lane에만 존재하는 키. K3 lane .env에 나타나면 안 된다(렌더 바이트 불변).
+K31_KEYS = frozenset({"VLLM_SPARSE_INDEXER_TOPK_BACKEND"})
+KNOWN_KEYS = ALLOWED_KEYS | K31_KEYS
+
+# --sparse-indexer-topk-backend에 허용하는 값. SM80 P1은 persistent(auto도 SM80에서는
+# persistent로 해석)이며 cooperative는 SM90+ 전용이라 SM80에서는 기동 시 RuntimeError다.
+SPARSE_INDEXER_TOPK_BACKENDS = frozenset({"persistent", "auto", "cooperative", "torch"})
 
 _INTEGER_KEYS = frozenset(
     {
@@ -144,7 +153,7 @@ class LaneEnv:
                 continue
             values[key] = _unquote(value.strip())
 
-        errors.extend(f"unknown key: {key}" for key in sorted(values.keys() - ALLOWED_KEYS))
+        errors.extend(f"unknown key: {key}" for key in sorted(values.keys() - KNOWN_KEYS))
         return cls(values=values, errors=errors)
 
     @classmethod
@@ -156,7 +165,13 @@ class LaneEnv:
 
     def validate(self, spec: LaneSpec, *, require_site_values: bool = True) -> list[str]:
         errors = list(self.errors)
-        errors.extend(f"missing key: {key}" for key in sorted(ALLOWED_KEYS - self.values.keys()))
+        required_keys = (ALLOWED_KEYS | K31_KEYS) if spec.is_k31 else ALLOWED_KEYS
+        errors.extend(f"missing key: {key}" for key in sorted(required_keys - self.values.keys()))
+        if not spec.is_k31:
+            errors.extend(
+                f"K3.1-only key is not allowed in K3 lane {spec.id}: {key}"
+                for key in sorted(K31_KEYS & self.values.keys())
+            )
 
         if require_site_values:
             errors.extend(
@@ -221,10 +236,34 @@ class LaneEnv:
                 "93 94 95 96 97" if spec.fp8_kv and spec.dspark else ""
             ),
         }
+        hints: dict[str, str] = {}
+        if spec.is_k31:
+            # K3.1 전용 규칙: 모델/백엔드/KV dtype을 spec에 고정한다.
+            expected_pairs.update(
+                {
+                    "K3_TARGET_MODEL": spec.target_model,
+                    "K3_DRAFT_MODEL": spec.draft_model,
+                    "VLLM_ATTENTION_BACKEND": spec.attention_backend,
+                    "VLLM_KV_CACHE_DTYPE": "bfloat16",
+                }
+            )
+            hints["VLLM_KV_CACHE_DTYPE"] = (
+                " (K3.1은 dsa_config가 있어 auto/fp8*를 fp8_ds_mla로 재작성하므로"
+                " bfloat16을 명시해야 한다)"
+            )
+            topk = self.values.get("VLLM_SPARSE_INDEXER_TOPK_BACKEND")
+            if topk is not None and topk not in SPARSE_INDEXER_TOPK_BACKENDS:
+                errors.append(
+                    f"VLLM_SPARSE_INDEXER_TOPK_BACKEND={topk!r} must be one of "
+                    f"{sorted(SPARSE_INDEXER_TOPK_BACKENDS)} for lane {spec.id}"
+                )
         for key, expected in expected_pairs.items():
             actual = self.values.get(key)
             if actual is not None and actual != expected:
-                errors.append(f"{key}={actual!r} must be {expected!r} for lane {spec.id}")
+                errors.append(
+                    f"{key}={actual!r} must be {expected!r} for lane {spec.id}"
+                    f"{hints.get(key, '')}"
+                )
 
         speculative = self.values.get("VLLM_SPECULATIVE_CONFIG", "")
         if spec.dspark and not speculative:

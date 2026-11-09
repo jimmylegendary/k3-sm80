@@ -62,3 +62,23 @@
 - Docker 이미지 `vllm/vllm-openai:kimi-k31`(day-0)은 공개 브랜치가 없고 사내 registry 차단 → 소스빌드(기존 방식) 유지.
 - `--trust-remote-code`, `--tool-call-parser kimi_k3 --reasoning-parser kimi_k3`, `--language-model-only` 그대로. `reasoning_effort` 요청 필드.
 - 이슈 #66524(148 SM GPU에서 specialized decode 기동 실패)는 SM100 전용 경로 → A100 무관.
+
+## 6. SM80 패치 지점 지도 (핀 `a3c14efb` 행 번호, P1 패치 작성 중 소스 판독)
+
+| 지점 | 파일:행 | 사실 | 패치 처리 |
+|---|---|---|---|
+| 백엔드 선택 | `platforms/cuda.py:81` `_get_backend_priorities`, SM8x/9x `else` `:136-152` (`sparse_tail :137`, `return :146`) | sparse 후보 3종이 `supports_compute_capability`에서 탈락 | `TRITON_MLA_SPARSE`를 맨 뒤에 추가. SM12x 분기에는 넣지 않음(백엔드가 major==8만 허용) |
+| registry | `v1/attention/backends/registry.py:94` | | `TRITON_MLA` 뒤에 항목 추가 |
+| 공용 골격 | `layers/attention/sparse_mla_attention.py`: `SparseMLACommonMetadata :155`, `...Builder :210`(`_init_reorder_batch_threshold :302`), `SparseMLACommonImpl :683`(`group_conversion_decode_only :689`, `forward_mqa :809`, 유일한 추상 훅 `_forward_mqa_kernel :958`) | 이 클래스들은 `backends/mla/`가 아니라 `layers/attention/`에 있다 | 상속 |
+| packed row | `backends/mla/sparse_utils.py`: `align_blocks_to_rows :43`, `flat_kv_row_view :49`, `out_val = base * BLOCK_STRIDE_ROWS + inblock_off :180`, `triton_convert_req_index_to_global_index :492` | row id는 int32 범위이나 `row*576` 오프셋은 약 3.73M row(약 139k 토큰)에서 int32 초과 | 커널 int64 승격 |
+| 템플릿 | `backends/mla/flashattn_mla_sparse.py`: Backend `:41`, Builder `:124`, Impl `:160`, `_forward_mqa_kernel :215` | | 골격 재사용 |
+| indexer op | `layers/sparse_attn_indexer.py:494`. key 삽입 `:679-696`(`skip_k_cache_insert=False`일 때 stock CUDA `ops.indexer_k_quant_and_cache`). top-k 버퍼 -1 fill `:722`. prefill XPU `:859` / DeepGEMM `:882` / `ops.top_k_per_row_prefill :932`. decode XPU `:1069` / DeepGEMM `:1091` / `get_indexer_topk :1146`. `chunk_decode :551`(SM100 전용). `SparseAttnIndexer.__init__` 가드 `:1285` | `top_k_per_row_prefill`은 rowStart를 빼 요청-로컬 인덱스를 냄(`csrc/sampler.cu:567`) → 절대 열 logits + `row_starts` 규약 가능 | XPU와 같은 자리에 Triton 분기. `:1285`는 경고로 완화(PR 동일). K3.1은 `SparseAttnIndexer`를 쓰지 않음 |
+| metadata 가드 | `backends/mla/indexer.py:918/:926/:946`(`_supports_*`, `:922/:930/:951`는 `has_deep_gemm()`), `:1836`/`:1918` schedule metadata 호출 | `:922/:930`은 capability 가드가 SM80을 이미 거름. `:951`은 SM80에서 `next_n in (1,2)`로 동일 귀결. 기존 테스트가 `indexer.has_deep_gemm`을 monkeypatch | `:1836`/`:1918`만 `has_deep_gemm() and is_deep_gemm_supported()`로 변경 |
+| DeepGEMM 판정 | `utils/deep_gemm.py:151 is_deep_gemm_supported`(`platforms/cuda.py:690 support_deep_gemm` = SM90 or family 100/120), `utils/import_utils.py:512 has_deep_gemm`(모듈 존재만) | SM80은 설치와 무관하게 False | |
+| fused Q | `models/deepseek_v2.py:755 use_fused_indexer_q` | | `has_device_capability(89)` 게이트 |
+| K3.1 indexer | `kimi_k3/nvidia/dsa.py`: `use_fused_k_insert :221-225`, `score :364`(Q 양자화 `:380`, op `:388-412`), `pack_projections :696`(fp8_ds_mla 조건 `:712`), `_fused_attention :768` | | glue |
+| top-k | `layers/indexer_topk.py`(`auto`→persistent, SM80), `csrc/topk.cu`(stride 정렬 불필요) | | 변경 없음 |
+| env 검증 | `platforms/interface.py:1503 validate_environ` | 미등록 `VLLM_*`는 경고(`--fail-on-environ-validation`이면 실패). `VLLM_ATTENTION_BACKEND`는 핀 `envs.py`에 없음 | `VLLM_K31_SM80_DSA` 등록 |
+| csrc | `torch_bindings.cpp:841`, `CMakeLists.txt:1047`, `_custom_ops.py:714` | `mxfp4_experts_quant` 바인딩이 SM100 전용 소스로 이동, wrapper는 AttributeError→False | PR csrc hunk 불필요 |
+
+호스트 검증으로 확인한 것: Triton 3.9 sm_80 컴파일 시 K3.1 `indexer_q_quant_fold_weights`는 `fp8e4nv not supported in this architecture`로 실패한다(sm_90은 OK). 패치된 sparse/logits 커널 전 config는 sm_80에서 컴파일되며 smem은 최대 52 KiB다.

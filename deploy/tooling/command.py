@@ -33,6 +33,7 @@ _MANAGED_LONG_FLAGS = frozenset(
         "--moe-backend",
         "--attention-backend",
         "--attention-config",
+        "--sparse-indexer-topk-backend",
         "--kda-prefill-backend",
         "--quantization",
         "--dtype",
@@ -196,6 +197,13 @@ def build_vllm_args(env: LaneEnv, node_rank: int) -> list[str]:
         "--reasoning-parser",
         v["VLLM_REASONING_PARSER"],
     ]
+
+    # K3.1 lane 전용 키: K3 .env에는 키 자체가 없으므로 K3 argv는 바뀌지 않는다.
+    # 값이 비어 있어도 키가 있으면 flag를 내보내 vLLM이 명시적으로 거부하게 한다.
+    if "VLLM_SPARSE_INDEXER_TOPK_BACKEND" in v:
+        args.extend(
+            ["--sparse-indexer-topk-backend", v["VLLM_SPARSE_INDEXER_TOPK_BACKEND"]]
+        )
 
     if v["VLLM_ENABLE_EXPERT_PARALLEL"] == "1":
         args.extend(["--enable-expert-parallel", "--all2all-backend", v["VLLM_ALL2ALL_BACKEND"]])

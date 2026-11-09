@@ -62,6 +62,62 @@ class RunbookTest(unittest.TestCase):
                     for length in ("262144", "524288", "786432", "1048576"):
                         self.assertIn(length, text, spec.id)
 
+    def test_k3_runbooks_keep_k3_model_names_and_never_mention_k31(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            render_all(root)
+            for spec in LANES:
+                if spec.is_k31:
+                    continue
+                text = (root / spec.id / "RUNBOOK.md").read_text()
+                self.assertIn("`moonshotai/Kimi-K3` MXFP4 checkpoint", text, spec.id)
+                self.assertIn(
+                    "/mnt/nas/home/ubuntu/service/large_model/Kimi-K3`다", text, spec.id
+                )
+                self.assertIn("models--moonshotai--Kimi-K3/snapshots", text, spec.id)
+                self.assertIn("models--Inferact--Kimi-K3-DSpark/snapshots", text, spec.id)
+                self.assertIn("kda-sm80-int64", text, spec.id)
+                for needle in (
+                    "K3.1",
+                    "gate-k11",
+                    "gate-k12",
+                    "reasoning_effort",
+                    "32-GPU cluster lock",
+                ):
+                    self.assertNotIn(needle, text, spec.id)
+
+    def test_k31_runbook_describes_k31_gates_image_and_honest_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+            render_all(root)
+            text = (root / "11-k31-tp8-pp4-256k-safe" / "RUNBOOK.md").read_text()
+
+        self.assertIn("TP8/PP4/DP1, EP=0", text)
+        self.assertIn("DSpark=0", text)
+        self.assertIn("`k08 kda k11 k12 pp`", text)
+        self.assertIn("이 lane의 선행 gate는 `k08 kda k11 k12`다", text)
+        self.assertIn("make gate-k11", text)
+        self.assertIn("make gate-k12", text)
+        self.assertIn("k11_dsa_indexer_sm80.json", text)
+        self.assertIn("k12_sparse_mla_sm80.json", text)
+        self.assertIn("`--kv-cache-dtype bfloat16`", text)
+        self.assertIn("fp8_ds_mla", text)
+        self.assertIn("`a3c14efb`", text)
+        self.assertIn("docker/patches-k31/", text)
+        self.assertIn("lane 11은 PP4 stamp가 현재 env와 일치", text)
+        self.assertIn("32-GPU cluster lock", text)
+        self.assertIn("단독 gate 실행은 preflight를 거치지 않아 막지 못한다", text)
+        self.assertNotIn("lane 02–05는 DP4/EP32", text)
+        # 정직한 상한: 속도 미보증, 256k만, DSpark 없음, 1M 미지원, Q fp8 미적용
+        self.assertIn("속도는 보증하지 않으며", text)
+        self.assertIn("1M 미지원", text)
+        self.assertIn("top-k 경계가 달라질 수 있다", text)
+        self.assertIn("`K3.1 P2`로 이동한다", text)
+        self.assertIn(
+            "[K31-SUPPORT-REVIEW.md](/home/jimmy/repos/k3-sm80/docs/K31-SUPPORT-REVIEW.md)",
+            text,
+        )
+
     def test_smoke_script_has_real_openai_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             root = Path(tempdir)

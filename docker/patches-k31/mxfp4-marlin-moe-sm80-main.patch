@@ -1,0 +1,122 @@
+mxfp4-marlin-moe-sm80-main.patch -- Marlin MoE(WNA16) SM80 enablement, vLLM main a3c14efb 판 (K3.1 전용, 신규)
+=====================================================================================================
+
+(이 머리글은 `git apply` 가 무시한다 -- 첫 번째 "diff --git" 줄 앞의 텍스트는 버려진다.)
+
+대상      : vLLM a3c14efbc77c018e8bf579935095a87721349e05 (main, 2026-11-09)
+적용 순서 : K3.1 패치 3개 중 첫째 -- mxfp4-marlin-moe-sm80-main -> triton-mla-sparse-sm80 -> k31-sm80-dsa-glue
+            (3개는 서로 다른 파일을 만지지만 Dockerfile.k31-openai 가 이 순서를 고정한다)
+영향 범위 : csrc/moe/marlin_moe_wna16/ops.cu 1개 파일. csrc 변경이므로 이미지에는 Python overlay 가 아니라
+            재빌드한 _moe_C_stable_libtorch.abi3.so 1개로만 반영된다 (cmake --target _moe_C_stable_libtorch).
+계보      : docker/patches/mxfp4-marlin-moe-sm80.patch (K3 pin 용, 사내 동작 중 -- 이 파일은 건드리지 않는다)
+            를 핀의 행에 맞춰 다시 쓴 것이다. 의도(버그 수정 내용)는 K3 패치와 같고, 리포 recon 기록상 vLLM PR #36889
+            ("[WIP][Bugfix] Fix CUDA illegal memory access for GPTQ Marlin MoE with CUDA graphs", 미병합 close) 와
+            이슈 #35922/#36811 계열이다. 이 파일의 수정은 소스 수준 rebase 이며 A100 실행 검증은 아직 없다
+            (kernel-kit k08 gate 가 판정한다).
+
+K3 패치 대비 구조 변화 (핀에서 달라진 것)
+  (1) 경로 이동: csrc/libtorch_stable/moe/marlin_moe_wna16/{ops.cu,kernel.h,marlin_template.h}
+                 -> csrc/moe/marlin_moe_wna16/ (핀에서 csrc/libtorch_stable 디렉터리 자체가 없어졌다).
+  (2) generator 통합: K3 패치의 첫 hunk 는 generate_kernels.py 에 "SM80 MXFP4 인스턴스가 생성되었는지" 가드를 넣는 것이었다.
+      핀에서는 generator 가 csrc/quantization/marlin/generate_kernels.py 하나로 통합되었고 MXFP4
+      (a=kBFloat16, b=kFE2M1f, s=kFE8M0fnu, group_blocks=[2]) 설정이 QUANT_CONFIGS 에 이미 들어 있어
+      sm80_kernel_bfloat16_fe2m1f_bfloat16.cu 가 upstream 에서 이미 생성된다 (CMakeLists.txt:1445 MARLIN_MOE_ARCHS "8.0+PTX",
+      :1493 glob "sm80_kernel_*.cu"). 그래서 이 hunk 는 버린다. 같은 보증은 Dockerfile.k31-openai 의
+      `test -s ...sm80_kernel_bfloat16_fe2m1f_bfloat16.cu && grep -Fq kFE8M0fnu <그 파일>` 로 대체한다.
+      (공용 generator 를 고치면 dense Marlin 커널까지 재생성되므로 건드리지 않는다.)
+  (3) 함수 시그니처 단순화: 핀에서는 marlin_mm()/determine_exec_config() 에서 has_act_order, is_a_8bit, a_s_ptr 가 사라졌다
+      (vLLM #65542 "Marlin: remove 8-bit (INT8/FP8) activation support"). K3 hunk 2·4 의 인자/문맥 행이 달라져
+      핀 행에 맞춰 다시 썼다.
+  (4) 버그 로직 자체(max_shared_mem 덮어쓰기, launch smem, c_tmp min())는 핀에도 그대로 남아 있다 -- 그래서 패치가 여전히 필요하다.
+
+hunk 목록 (모두 csrc/moe/marlin_moe_wna16/ops.cu, 핀 행 번호 기준 -- 순서대로 diff 에 나온다)
+  H1 (:286-289) 장치 능력치 변수 분리.
+      cudaDevAttrMaxSharedMemoryPerBlockOptin 으로 읽은 "장치가 허용하는 블록당 동적 smem 최대치"를 max_shared_mem 이 아니라
+      device_max_shared_mem 에 담는다. 원 코드는 같은 변수를 뒤에서 per-block 몫(device / blocks_per_sm - 1024)으로
+      덮어써서 장치 능력치가 사라졌다. 이 hunk 는 능력치를 불변 변수로 남기는 준비 단계다.
+  H2 (:318-321) determine_exec_config() 에 device_max_shared_mem 을 넘긴다.
+      호출 시점의 값은 원래도 장치 능력치였으므로 동작은 같다 (H1 의 이름 변경을 따라가는 hunk).
+  H3 (:328-330) per-block 몫을 별도 지역 변수로 재도입.
+      `int max_shared_mem = device_max_shared_mem;` 를 blocks 계산 직후에 둔다. 이후 `blocks_per_sm > 1` 이면
+      max_shared_mem 을 device/blocks_per_sm - 1024 로 줄이는 원 로직과, 그 값을 쓰는 is_valid_config() 검증·오류 메시지는
+      그대로다 (몫은 "설정 유효성 판정" 전용이 된다).
+  H4 (:365-369) cudaFuncSetAttribute 상한과 launch 의 동적 smem 을 분리.
+      cudaFuncSetAttribute(MaxDynamicSharedMemorySize) 는 커널 함수(템플릿 인스턴스) 단위의 전역 상한이다. 원 코드는 호출마다
+      이 상한을 per-block 몫으로 덮어쓰고, launch 의 동적 smem 도 그 몫 전체(max_shared_mem)를 요구했다. 같은 인스턴스를
+      blocks_per_sm 이 다른 shape 으로 번갈아 부르면 상한이 호출마다 달라지고(덮어쓰기), launch 는 커널이 실제로 쓰는
+      양(sh_cache_size = get_kernel_cache_size(...), 핀 :347)보다 많은 smem 을 요구한다. 수정: 상한은 항상
+      device_max_shared_mem 으로 고정하고, launch 는 sh_cache_size 만 요청한다. (sh_cache_size 는 핀 :347 에 존재하며
+      is_valid_config() 가 쓰는 get_kernel_cache_size() 와 같은 산식이다.)
+  H5 (:501-510) c_tmp(fp32 reduce 버퍼) 크기에서 batch 의존 min() 항 제거.
+      원 코드 min((long)size_n * sorted_token_ids.size(0), (long)sms * 4 * moe_block_size * max_thread_n) 의 앞 항은
+      정렬된 토큰 수(= batch) 에 의존한다. 커널의 global reduce 는 C_tmp 를 `locks_off * c_size` 오프셋
+      (marlin_template.h global_reduce_fp32, 핀 :1321)으로 최대 sms*4 개의 타일 슬롯까지 인덱싱하므로, 작은 batch 로
+      할당된 버퍼를 더 큰 batch 가 쓰면(재사용·CUDA graph 캡처 경로) 버퍼를 넘을 수 있다(#36889 가 제거하려던 바로 그 항).
+      뒤 항은 batch 와 무관한 상한이므로 그것만 남겨 항상 상한 크기로 할당한다. 비용: A100(108 SM) 기준 최대
+      108*4*64*256 float = 약 28 MB (moe_block_size==8 이면 x2 유지) -- 무시할 수준.
+
+적용 검증 (이 패치를 만든 방법): 핀 worktree 에서 `git apply --check` -> 적용 -> `git diff --check` -> 아래 grep gate.
+  grep -Fq device_max_shared_mem csrc/moe/marlin_moe_wna16/ops.cu
+  grep -Fq 'kernel<<<blocks, num_threads, sh_cache_size, stream>>>' csrc/moe/marlin_moe_wna16/ops.cu
+  ! grep -Fq 'size_n * sorted_token_ids.size(0)' csrc/moe/marlin_moe_wna16/ops.cu
+
+diff --git a/csrc/moe/marlin_moe_wna16/ops.cu b/csrc/moe/marlin_moe_wna16/ops.cu
+index 6b6d5c02c7..801e094cad 100644
+--- a/csrc/moe/marlin_moe_wna16/ops.cu
++++ b/csrc/moe/marlin_moe_wna16/ops.cu
+@@ -283,10 +283,10 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
+   const float* topk_weights_ptr = (const float*)topk_weights;
+   int* locks = (int*)workspace;
+ 
+-  int max_shared_mem = 0;
+-  cudaDeviceGetAttribute(&max_shared_mem,
++  int device_max_shared_mem = 0;
++  cudaDeviceGetAttribute(&device_max_shared_mem,
+                          cudaDevAttrMaxSharedMemoryPerBlockOptin, dev);
+-  STD_TORCH_CHECK(max_shared_mem > 0);
++  STD_TORCH_CHECK(device_max_shared_mem > 0);
+ 
+   int major_capability, minor_capability;
+   cudaDeviceGetAttribute(&major_capability, cudaDevAttrComputeCapabilityMajor,
+@@ -318,7 +318,7 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
+     exec_cfg = determine_exec_config(
+         a_type, b_type, c_type, s_type, prob_m, prob_n, prob_k, num_experts,
+         top_k, thread_m_blocks, m_block_size_8, num_bits, group_size, has_zp,
+-        is_zp_float, stages, max_shared_mem, sms);
++        is_zp_float, stages, device_max_shared_mem, sms);
+     thread_tfg = exec_cfg.tb_cfg;
+   }
+ 
+@@ -326,6 +326,7 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
+   thread_k = thread_tfg.thread_k;
+   thread_n = thread_tfg.thread_n;
+   int blocks = sms * exec_cfg.blocks_per_sm;
++  int max_shared_mem = device_max_shared_mem;
+   if (exec_cfg.blocks_per_sm > 1)
+     max_shared_mem = max_shared_mem / exec_cfg.blocks_per_sm - 1024;
+ 
+@@ -363,10 +364,10 @@ void marlin_mm(const void* A, const void* B, void* C, void* C_tmp, void* b_bias,
+   }
+ 
+   cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
+-                       max_shared_mem);
++                       device_max_shared_mem);
+   // avoid ">>>" being formatted to "> > >"
+   // clang-format off
+-  kernel<<<blocks, num_threads, max_shared_mem, stream>>>(
++  kernel<<<blocks, num_threads, sh_cache_size, stream>>>(
+       A_ptr, B_ptr, C_ptr, C_tmp_ptr, bias_ptr, b_s_ptr, g_s_ptr, zp_ptr,
+       sorted_token_ids_ptr, expert_ids_ptr, num_tokens_past_padded_ptr,
+       topk_weights_ptr, top_k, mul_topk_weights, prob_m, prob_n, prob_k, locks,
+@@ -501,9 +502,8 @@ torch::stable::Tensor moe_wna16_marlin_gemm(
+   torch::stable::Tensor c_tmp;
+   if (use_fp32_reduce && !use_atomic_add) {
+     // max num of threadblocks is sms * 4
+-    long max_c_tmp_size = min(
+-        (long)size_n * sorted_token_ids.size(0),
+-        (long)sms * 4 * moe_block_size * MARLIN_NAMESPACE_NAME::max_thread_n);
++    long max_c_tmp_size =
++        (long)sms * 4 * moe_block_size * MARLIN_NAMESPACE_NAME::max_thread_n;
+     if (moe_block_size == 8) max_c_tmp_size *= 2;
+     c_tmp = torch::stable::new_empty(a, {max_c_tmp_size}, kFloat);
+   } else {

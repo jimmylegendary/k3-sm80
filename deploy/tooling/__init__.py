@@ -1,1 +1,1 @@
-"""Generation and validation helpers for the five serving lanes."""
+"""Generation and validation helpers for the serving lanes."""

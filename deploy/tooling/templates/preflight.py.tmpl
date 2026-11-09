@@ -144,7 +144,7 @@ def main() -> int:
                 rank,
                 [
                     "python3",
-                    str(repo_root / "docker/verify_image.py"),
+                    str(repo_root / "@@IMAGE_VERIFIER@@"),
                     values["K3_IMAGE"],
                     "--gpu",
                 ],

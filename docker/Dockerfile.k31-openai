@@ -1,0 +1,378 @@
+# syntax=docker/dockerfile:1
+#
+# Kimi K3.1-Pro OpenAI serving layer — vLLM main a3c14efb 위의 SM80 패치 세트 이미지.
+#
+# ★ K3 이미지와 별개 ★  docker/Dockerfile.openai(K3, 사내 동작 중)와 docker/patches/ 는 그대로다.
+#   이 파일은 신규이며 docker/patches-k31/ 의 패치 3개만 쓴다. 태그: k31-sm80-openai:a3c14efb-sm80-v1
+#
+# 구조 (K3 Dockerfile.openai 와 같은 2단 overlay → runtime):
+#   patched-build  : 핀 소스 clone → marlin 패치(csrc) 적용 → _moe_C_stable_libtorch 1개만 재빌드(cmake --target)
+#   python-overlay : 나머지 패치 2개(Python) 적용 → git diff 로 overlay 파일 목록을 "도출" → tar
+#   runtime        : 같은 커밋의 BASE_IMAGE(k31 full 티어) 위에 .so 1개 + overlay tar 만 얹는다
+#
+# 패치 적용 순서(고정): mxfp4-marlin-moe-sm80-main → triton-mla-sparse-sm80 → k31-sm80-dsa-glue
+#   각각 `git apply --check --index` 후 적용한다(--index: 새 파일도 index 에 올라가 git diff 로 목록이 도출된다).
+#
+# 재빌드 범위 (핀에서 확인):
+#   · Marlin MoE 소스(csrc/moe/marlin_moe_wna16/)를 컴파일하는 타깃은 _moe_C_stable_libtorch 하나뿐이다
+#     (CMakeLists.txt:1471-1516 · 다른 확장은 이 경로를 참조하지 않는다). 파이썬 호출은 torch.ops._moe_C.* 로 같다.
+#   · 핀에서 _moe_C_stable_libtorch 는 MoE 확장 전체(topk·align·permute·marlin)이므로 K3 때보다 .so 안의 연산이 많다.
+#     같은 커밋·같은 아치(8.0)로 다시 만든 것이라 기능 동치다. csrc 변경이 csrc/moe/ 밖으로 나가면 아래 scope gate 가
+#     빌드를 멈춘다(다른 확장을 재빌드하도록 이 파일을 확장해야 한다).
+#   · nvfp4 링크 스텁(PR #47629 의 nvfp4_quant_entry.cu hunk)은 핀에서 불필요하다: csrc/torch_bindings.cpp:841 이
+#     mxfp4_experts_quant 등록을 SM100 전용 mxfp4_experts_quant.cu 로 옮겼다(무조건 참조 소멸) → 포함하지 않는다.
+#
+# Python overlay 파일 목록은 하드코딩하지 않는다: `git diff --cached --name-status <핀>` 에서 vllm/**/*.py 의 A/M 만
+# 뽑는다. 범위를 벗어난 변경(vllm/ 밖 비-csrc/moe, 삭제 등)은 빌드를 멈춘다. 각 파일은 py_compile 하고,
+# M 파일은 "기반 이미지의 파일 == 핀 원본" 을 sha256 으로 확인한 뒤 덮어쓴다(기반이 다른 커밋이면 즉시 실패).
+#
+# 병렬 빌드: K3 방식 유지 — cmake job pool = MAX_JOBS (K3 openai 와 동일). nvcc 잡당 ~2GB.
+# ccache/.deps 캐시 id 는 k31-* 로 분리한다(K3 이미지 빌드 캐시를 오염시키지 않는다).
+
+ARG BASE_IMAGE=k31-sm80-kernelkit:full-a3c14efb
+ARG VLLM_COMMIT=a3c14efbc77c018e8bf579935095a87721349e05
+ARG PYTHON_VERSION=3.12
+# build-k31.sh 가 full 이미지 ID(sha256:…)를 넘긴다. 직접 빌드하면 "unpinned" (verify 가 경고한다).
+ARG BASE_DIGEST=unpinned
+
+FROM ${BASE_IMAGE} AS patched-build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG VLLM_COMMIT
+ARG MAX_JOBS=8
+ARG NVCC_THREADS=2
+ENV TORCH_CUDA_ARCH_LIST=8.0 \
+    MAX_JOBS=${MAX_JOBS} \
+    NVCC_THREADS=${NVCC_THREADS} \
+    CCACHE_DIR=/root/.cache/ccache
+
+USER root
+# 전체 프로젝트 configure(find_package(Torch))가 요구하는 CUDA dev 패키지. K3 때 확인된 3개(nvrtc/cusolver/cusparse)에
+# torch 2.14 대비 여유분(cufft/nvjitlink/cupti/nvtx/cudart-dev/driver-dev)을 더한다 — 이 스테이지에서만 쓰이며 이미지에 남지 않는다.
+# 핀은 CUDA 빌드에 g++ >= 13 을 요구한다(CMakeLists.txt:1842) — 기반(24.04)의 g++ 13.2 로 충족, 여기서 즉시 확인한다.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential ccache cuda-nvrtc-dev-13-0 cuda-cudart-dev-13-0 cuda-driver-dev-13-0 \
+       libcusolver-dev-13-0 libcusparse-dev-13-0 libcufft-dev-13-0 libnvjitlink-dev-13-0 \
+       cuda-cupti-dev-13-0 cuda-nvtx-13-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && { g++ -dumpfullversion | awk -F. '{ exit !($1 >= 13) }' \
+         || { echo "g++ $(g++ -dumpfullversion) < 13 — 핀 CMakeLists.txt:1842 요구 위반" >&2; exit 1; }; }
+
+WORKDIR /src/vllm
+RUN git clone --filter=blob:none https://github.com/vllm-project/vllm.git . \
+    && git checkout --detach "${VLLM_COMMIT}" \
+    && test "$(git rev-parse HEAD)" = "${VLLM_COMMIT}"
+
+# 패치 1/3 — csrc(Marlin MoE). 아래 gate 는 패치 헤더에 적은 3가지 의도를 소스에서 직접 확인한다.
+COPY docker/patches-k31/mxfp4-marlin-moe-sm80-main.patch /tmp/patches/mxfp4-marlin-moe-sm80-main.patch
+RUN git apply --check --index /tmp/patches/mxfp4-marlin-moe-sm80-main.patch \
+    && git apply --index /tmp/patches/mxfp4-marlin-moe-sm80-main.patch \
+    && git diff --cached --check \
+    && grep -Fq 'device_max_shared_mem' \
+       csrc/moe/marlin_moe_wna16/ops.cu \
+    && grep -Fq 'kernel<<<blocks, num_threads, sh_cache_size, stream>>>' \
+       csrc/moe/marlin_moe_wna16/ops.cu \
+    && ! grep -Fq 'size_n * sorted_token_ids.size(0)' \
+       csrc/moe/marlin_moe_wna16/ops.cu
+
+# Configure the pinned source but compile/install only the patched stable-ABI
+# MoE extension.  The base image already contains the same vLLM commit and all
+# unrelated extensions, so rebuilding the whole wheel would compile unused
+# Hopper/Blackwell targets and needlessly duplicate /opt/venv.
+# (configure 는 DeepGEMM·FlashMLA·cutlass 등 외부 프로젝트를 git clone 한다 → 빌드 중 GitHub 접근 필요.)
+RUN --mount=type=cache,id=k31-ccache,target=/root/.cache/ccache \
+    --mount=type=cache,id=k31-vllm-deps,target=/src/vllm/.deps \
+    python_path="$(python3 -c 'import sys; print(":".join(sys.path))')" \
+    && { \
+      cmake -S . -B /tmp/k31-moe-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DVLLM_TARGET_DEVICE=cuda \
+        -DVLLM_PYTHON_EXECUTABLE=/opt/venv/bin/python3 \
+        -DVLLM_PYTHON_PATH="${python_path}" \
+        -DFETCHCONTENT_BASE_DIR=/src/vllm/.deps \
+        -DNVCC_THREADS="${NVCC_THREADS}" \
+        -DCMAKE_JOB_POOL_COMPILE:STRING=compile \
+        -DCMAKE_JOB_POOLS:STRING="compile=${MAX_JOBS}" \
+        -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+        -DCMAKE_CUDA_ARCHITECTURES=80 \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache \
+      && cmake --build /tmp/k31-moe-build -j "${MAX_JOBS}" \
+        --target _moe_C_stable_libtorch \
+      && cmake --install /tmp/k31-moe-build \
+        --prefix /tmp/k31-moe-install \
+        --component _moe_C_stable_libtorch; \
+    } 2>&1 | tee /tmp/build-k31-openai.log \
+    && test -s \
+       /tmp/k31-moe-install/vllm/_moe_C_stable_libtorch.abi3.so \
+    && test -s \
+       csrc/moe/marlin_moe_wna16/sm80_kernel_bfloat16_fe2m1f_bfloat16.cu \
+    && grep -Fq kFE8M0fnu \
+       csrc/moe/marlin_moe_wna16/sm80_kernel_bfloat16_fe2m1f_bfloat16.cu \
+    && grep -Fq 'vllm::kFE2M1f.id(), vllm::kBFloat16.id(), vllm::kFE8M0fnu.id()' \
+       csrc/moe/marlin_moe_wna16/sm80_kernel_bfloat16_fe2m1f_bfloat16.cu \
+    && mkdir -p /opt/k31-openai-build \
+    && gzip -9 -c /tmp/build-k31-openai.log \
+       > /opt/k31-openai-build/build.log.gz \
+    && sha256sum /tmp/k31-moe-install/vllm/_moe_C_stable_libtorch.abi3.so \
+       > /opt/k31-openai-build/moe-so.sha256 \
+    && sha256sum /tmp/patches/mxfp4-marlin-moe-sm80-main.patch \
+       > /opt/k31-openai-build/patches.sha256 \
+    && printf '%s\n' "${VLLM_COMMIT}" \
+       > /opt/k31-openai-build/VLLM_COMMIT.txt
+
+FROM patched-build AS python-overlay
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG VLLM_COMMIT
+# 패치 2/3, 3/3 — Python(+Triton JIT 소스). 순서 고정: triton-mla-sparse-sm80 → k31-sm80-dsa-glue
+COPY docker/patches-k31/triton-mla-sparse-sm80.patch /tmp/patches/triton-mla-sparse-sm80.patch
+COPY docker/patches-k31/k31-sm80-dsa-glue.patch /tmp/patches/k31-sm80-dsa-glue.patch
+RUN git apply --check --index /tmp/patches/triton-mla-sparse-sm80.patch \
+    && git apply --index /tmp/patches/triton-mla-sparse-sm80.patch \
+    && git apply --check --index /tmp/patches/k31-sm80-dsa-glue.patch \
+    && git apply --index /tmp/patches/k31-sm80-dsa-glue.patch \
+    && git diff --cached --check
+
+# overlay 목록 도출 + scope gate + 매니페스트(sha256). 허용 범위:
+#   vllm/**/*.py 의 A/M → Python overlay · csrc/moe/** → 위에서 재빌드한 .so 가 반영 · tests/, docs/ → 이미지에 싣지 않음.
+#   그 밖의 변경(삭제 포함)은 overlay 로 표현할 수 없으므로 빌드를 멈춘다.
+RUN python3 - <<'PY'
+import hashlib
+import os
+import pathlib
+import subprocess
+import sys
+
+pin = os.environ["VLLM_COMMIT"]
+out = pathlib.Path("/opt/k31-openai-build")
+out.mkdir(parents=True, exist_ok=True)
+
+
+def git(*args, binary=False):
+    return subprocess.run(
+        ["git", *args], check=True, capture_output=True, text=not binary
+    ).stdout
+
+
+overlay, rebuilt, unshipped, bad = [], [], [], []
+for line in git("diff", "--cached", "--name-status", "--no-renames", pin).splitlines():
+    status, path = line.split("\t", 1)
+    if path.startswith("vllm/") and path.endswith(".py"):
+        (overlay if status in ("A", "M") else bad).append((status, path))
+    elif path.startswith("csrc/moe/"):
+        rebuilt.append(path)
+    elif path.startswith(("tests/", "docs/")):
+        unshipped.append(path)
+    else:
+        bad.append((status, path))
+if bad:
+    sys.exit(
+        "overlay scope 위반 (python overlay 로 반영할 수 없는 변경):\n"
+        + "\n".join(f"  {s} {p}" for s, p in bad)
+    )
+overlay.sort(key=lambda row: row[1])
+
+# 최소 요구(리더 명세): registry 에 TRITON_MLA_SPARSE 등록 + 두 Triton 모듈. 백엔드 클래스 파일명은 ① 산출물이 정하며
+# `AttentionBackendEnum.TRITON_MLA_SPARSE.get_class()` import 는 verify_k31_image.py 가 증명한다.
+required = {
+    "vllm/v1/attention/backends/registry.py",
+    "vllm/v1/attention/ops/mqa_logits_triton.py",
+    "vllm/v1/attention/ops/triton_mla_sparse_kernel.py",
+}
+missing = required - {path for _, path in overlay}
+assert not missing, f"TRITON_MLA_SPARSE 패치가 만들어야 할 파일이 overlay 에 없음: {sorted(missing)}"
+assert "csrc/moe/marlin_moe_wna16/ops.cu" in rebuilt, "marlin 패치가 적용되지 않았다"
+
+manifest = ["status\tpath\tpristine_sha256\tpatched_sha256"]
+for status, path in overlay:
+    patched = hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+    if status == "M":
+        pristine = hashlib.sha256(git("show", f"{pin}:{path}", binary=True)).hexdigest()
+    else:
+        pristine = "-"
+    manifest.append(f"{status}\t{path}\t{pristine}\t{patched}")
+pathlib.Path("/opt/k31-overlay-files.txt").write_text(
+    "".join(f"{path}\n" for _, path in overlay)
+)
+(out / "overlay-manifest.tsv").write_text("\n".join(manifest) + "\n")
+print(
+    f"overlay files={len(overlay)} (A={sum(s == 'A' for s, _ in overlay)} "
+    f"M={sum(s == 'M' for s, _ in overlay)}) rebuilt-csrc={len(rebuilt)} unshipped={len(unshipped)}"
+)
+for status, path in overlay:
+    print(f"  {status} {path}")
+PY
+RUN xargs -a /opt/k31-overlay-files.txt python3 -m py_compile \
+    && tar --owner=0 --group=0 --numeric-owner -cf /opt/k31-overlay.tar \
+       -T /opt/k31-overlay-files.txt \
+    && test "$(tar -tf /opt/k31-overlay.tar | wc -l)" = "$(wc -l < /opt/k31-overlay-files.txt)" \
+    && sha256sum \
+       /tmp/patches/triton-mla-sparse-sm80.patch \
+       /tmp/patches/k31-sm80-dsa-glue.patch \
+       >> /opt/k31-openai-build/patches.sha256 \
+    && test "$(wc -l < /opt/k31-openai-build/patches.sha256)" = 3
+
+FROM ${BASE_IMAGE} AS runtime
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG VLLM_COMMIT
+ARG BASE_IMAGE
+ARG BASE_DIGEST
+ARG PYTHON_VERSION
+# 주의: 이미지 ENV 에 VLLM_ 접두를 쓰지 않는다 — 핀의 Platform.validate_environ 은 알 수 없는 VLLM_* 환경변수를
+# 경고(--fail-on-environ-validation 이면 오류)로 취급한다(vllm/platforms/interface.py:1503).
+ENV TORCH_CUDA_ARCH_LIST=8.0 \
+    K31_VLLM_COMMIT=${VLLM_COMMIT} \
+    K3_PATCHSET=mxfp4-marlin-moe-sm80-main+triton-mla-sparse-sm80+k31-sm80-dsa-glue
+
+# Replace exactly one stable-ABI CUDA extension, then overlay the derived Python/JIT sources.
+# The destination venv comes from BASE_IMAGE and is pinned to VLLM_COMMIT.
+COPY --from=patched-build /tmp/k31-moe-install/vllm/ \
+  /opt/venv/lib/python${PYTHON_VERSION}/site-packages/vllm/
+COPY --from=python-overlay /opt/k31-openai-build /opt/k31-openai-build
+COPY --from=python-overlay /opt/k31-overlay.tar /opt/k31-overlay-files.txt \
+  /opt/k31-openai-build/
+COPY --from=python-overlay /tmp/patches/mxfp4-marlin-moe-sm80-main.patch \
+  /opt/k31-patches/mxfp4-marlin-moe-sm80-main.patch
+COPY --from=python-overlay /tmp/patches/triton-mla-sparse-sm80.patch \
+  /opt/k31-patches/triton-mla-sparse-sm80.patch
+COPY --from=python-overlay /tmp/patches/k31-sm80-dsa-glue.patch \
+  /opt/k31-patches/k31-sm80-dsa-glue.patch
+
+# overlay 반영: 추출 전에 기반 이미지의 파일이 핀 원본과 같은지(M)/없는지(A) 확인하고, 추출 후 sha256 을 대조한다.
+# 덮어쓴 파일의 stale .pyc 는 지운다(경로 매핑: vllm/… → <site-packages>/vllm/…).
+RUN python3 - <<'PY'
+import hashlib
+import pathlib
+import subprocess
+import sysconfig
+
+site = pathlib.Path(sysconfig.get_paths()["purelib"])
+build = pathlib.Path("/opt/k31-openai-build")
+assert (site / "vllm" / "_moe_C_stable_libtorch.abi3.so").is_file(), (
+    "COPY 대상 경로와 venv site-packages 가 다르다: " + str(site)
+)
+rows = [
+    line.split("\t")
+    for line in (build / "overlay-manifest.tsv").read_text().splitlines()[1:]
+    if line
+]
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+for status, rel, pristine, _patched in rows:
+    dst = site / rel
+    if status == "M":
+        assert dst.is_file(), f"기반 이미지에 {rel} 없음"
+        assert sha(dst) == pristine, f"기반 이미지의 {rel} 이 핀 원본과 다르다 (다른 커밋으로 빌드된 기반?)"
+    else:
+        assert not dst.exists(), f"새 파일 {rel} 이 기반 이미지에 이미 있다"
+subprocess.run(
+    ["tar", "-xf", str(build / "k31-overlay.tar"), "-C", str(site)], check=True
+)
+for status, rel, _pristine, patched in rows:
+    dst = site / rel
+    assert sha(dst) == patched, f"overlay 불일치: {rel}"
+    for pyc in dst.parent.glob(f"__pycache__/{dst.stem}.*.pyc"):
+        pyc.unlink()
+print(f"overlay ok: {len(rows)} files -> {site}")
+PY
+
+LABEL org.opencontainers.image.source="https://github.com/jimmylegendary/k3-sm80" \
+      org.opencontainers.image.revision="${VLLM_COMMIT}" \
+      org.opencontainers.image.description="Kimi-K3.1-Pro OpenAI serving runtime for 4-node x 8x A100 (vLLM main a3c14efb + SM80 patch set)" \
+      io.k3.cuda_arch="sm80" \
+      io.k3.patchset="mxfp4-marlin-moe-sm80-main+triton-mla-sparse-sm80+k31-sm80-dsa-glue" \
+      io.k3.base_digest="${BASE_DIGEST}" \
+      io.k31.vllm_commit="${VLLM_COMMIT}" \
+      io.k31.base_image="${BASE_IMAGE}"
+
+# CPU-safe contract: importing the API/parser modules and checking installed
+# source does not claim that a GPU kernel has executed.
+# (새 모듈의 import·GPU 동작 검증은 docker/verify_k31_image.py [--gpu] 가 담당한다.)
+RUN python3 - <<'PY'
+import hashlib
+import importlib
+import pathlib
+import sysconfig
+
+import torch
+import vllm
+from vllm import _custom_ops
+
+expected = "a3c14efbc77c018e8bf579935095a87721349e05"
+build = pathlib.Path("/opt/k31-openai-build")
+assert pathlib.Path("/opt/vllm-build/VLLM_COMMIT.txt").read_text().strip() == expected
+assert (build / "VLLM_COMMIT.txt").read_text().strip() == expected
+assert torch.__version__.startswith("2.14.0"), torch.__version__
+assert (torch.version.cuda or "").startswith("13.0"), torch.version.cuda
+for module in (
+    "vllm.entrypoints.openai.api_server",
+    "vllm.tool_parsers.kimi_k3_tool_parser",
+    "vllm.reasoning.kimi_k3_reasoning_parser",
+):
+    importlib.import_module(module)
+
+site = pathlib.Path(sysconfig.get_paths()["purelib"])
+root = pathlib.Path(vllm.__file__).parent
+assert root == site / "vllm", (root, site)
+rows = [
+    line.split("\t")
+    for line in (build / "overlay-manifest.tsv").read_text().splitlines()[1:]
+    if line
+]
+assert rows, "overlay manifest 가 비어 있다"
+for _status, rel, _pristine, patched in rows:
+    got = hashlib.sha256((site / rel).read_bytes()).hexdigest()
+    assert got == patched, f"installed {rel} != patched"
+registry = (root / "v1/attention/backends/registry.py").read_text()
+assert "TRITON_MLA_SPARSE" in registry
+for rel in (
+    "v1/attention/ops/mqa_logits_triton.py",
+    "v1/attention/ops/triton_mla_sparse_kernel.py",
+    "models/kimi_k3/nvidia/dsa.py",
+):
+    assert (root / rel).is_file(), rel
+deep_gemm = root / "third_party" / "deep_gemm"
+assert not (deep_gemm.is_dir() and list(deep_gemm.glob("_C_extension*.so"))), "DeepGEMM 확장이 있다"
+
+so = root / "_moe_C_stable_libtorch.abi3.so"
+want = (build / "moe-so.sha256").read_text().split()[0]
+assert hashlib.sha256(so.read_bytes()).hexdigest() == want, "overlay 된 .so 가 빌드 산출물과 다르다"
+assert "sm_80" in torch.cuda.get_arch_list()
+shas = [line.split() for line in (build / "patches.sha256").read_text().splitlines()]
+assert [pathlib.Path(p).name for _, p in shas] == [
+    "mxfp4-marlin-moe-sm80-main.patch",
+    "triton-mla-sparse-sm80.patch",
+    "k31-sm80-dsa-glue.patch",
+], shas
+for digest, name in shas:
+    shipped = pathlib.Path("/opt/k31-patches") / pathlib.Path(name).name
+    assert hashlib.sha256(shipped.read_bytes()).hexdigest() == digest, shipped
+# Marlin op 등록: .so 가 libcuda.so.1 을 요구하면 GPU 없는 빌드 호스트에서는 import 자체가 안 된다 — 그 경우에 한해
+# 등록 확인을 A100 노드의 `verify_k31_image.py --gpu` 로 미룬다(다른 ImportError 는 그대로 실패).
+try:
+    importlib.import_module("vllm._moe_C_stable_libtorch")
+except ImportError as exc:
+    if "libcuda" not in str(exc):
+        raise
+    marlin = f"deferred-to-gpu ({exc})"
+else:
+    assert hasattr(torch.ops._moe_C, "moe_wna16_marlin_gemm"), "moe_wna16_marlin_gemm 미등록"
+    marlin = "registered"
+print(
+    "K31-OPENAI-CONTRACT PASS mode=cpu "
+    "patch=mxfp4-marlin-moe-sm80-main+triton-mla-sparse-sm80+k31-sm80-dsa-glue "
+    f"overlay={len(rows)} marlin-op={marlin}"
+)
+PY
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20m --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${VLLM_API_PORT:-8000}/health" || exit 1
+ENTRYPOINT ["vllm", "serve"]
+CMD []
+
+FROM runtime AS contract

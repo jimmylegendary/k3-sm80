@@ -2,10 +2,19 @@
 
 ## 1. 검증 범위
 
-이 lane은 원본 `moonshotai/Kimi-K3` MXFP4 checkpoint를 SM80에서
+이 lane은 원본 `@@TARGET_MODEL@@` MXFP4 checkpoint를 SM80에서
 TP@@TP@@/PP@@PP@@/DP@@DP@@, EP=@@EP@@로 기동하는 단계를 검증한다. DSpark=@@DSPARK@@,
 software FP8 KV=@@FP8_KV@@다. 필수 최종 gate는 `@@REQUIRED_GATES@@`다.
 사내 A100에서 stamp가 만들어지기 전 상태는 `INCOMPLETE`이며, host dry-run은 PASS가 아니다.
+@@IF K31@@
+
+P1 상한: K3.1-Pro는 DSA(DeepSeek Sparse Attention) indexer가 붙은 24개 attention 층이
+SM80에서 vLLM 기본 경로(DeepGEMM, FlashMLA sparse)로 돌지 않는다. 이 lane은 SM80 전용 경로
+(indexer logits k11, sparse MLA 백엔드 `TRITON_MLA_SPARSE` k12)를 이미지 패치로 얹어 검증한다.
+속도는 보증하지 않으며(kernel PERF는 측정 전용), 256k, BF16 KV, `max_num_seqs=1`,
+`enforce_eager`, DSpark 없음, 1M 미지원이다. indexer Q는 FP8로 양자화하지 않아 DeepGEMM 대비
+top-k 경계가 달라질 수 있다. 근거는 [K31-SUPPORT-REVIEW.md](/home/jimmy/repos/k3-sm80/docs/K31-SUPPORT-REVIEW.md) §2, §5다.
+@@ENDIF@@
 
 ## 2. 토폴로지와 rank
 
@@ -40,12 +49,14 @@ MXFP4/Marlin, KDA Triton, KV dtype, context, concurrency, DSpark 옵션은 모�
 ## 4. 모델 cache
 
 공유 HF cache는 `/mnt/nas/home/models`, service/repository root는
-`/mnt/nas/home/ubuntu/service/large_model/Kimi-K3`다. 네 노드에서 같은 snapshot을
+`@@SERVING_ROOT@@`다. 네 노드에서 같은 snapshot을
 보는지 확인한다.
 
 ```bash
-find /mnt/nas/home/models -path '*models--moonshotai--Kimi-K3/snapshots/*' -maxdepth 5 -type d
-find /mnt/nas/home/models -path '*models--Inferact--Kimi-K3-DSpark/snapshots/*' -maxdepth 5 -type d
+find /mnt/nas/home/models -path '*models--@@TARGET_CACHE_DIR@@/snapshots/*' -maxdepth 5 -type d
+@@IF HAS_DRAFT@@
+find /mnt/nas/home/models -path '*models--@@DRAFT_CACHE_DIR@@/snapshots/*' -maxdepth 5 -type d
+@@ENDIF@@
 ```
 
 DSpark=0이면 draft cache는 필수 조건이 아니다. 인터넷 없이 실행하므로 누락 snapshot을
@@ -57,13 +68,19 @@ serving 중 내려받으려 하지 않는다.
 
 ```bash
 docker image inspect --format '{{.Id}} {{index .Config.Labels "io.k3.patchset"}}' "$(sed -n 's/^K3_IMAGE=//p' .env)"
-python3 ../../docker/verify_image.py "$(sed -n 's/^K3_IMAGE=//p' .env)" --gpu
+python3 ../../@@IMAGE_VERIFIER@@ "$(sed -n 's/^K3_IMAGE=//p' .env)" --gpu
 ```
 
+@@IF K31@@
+이 lane의 이미지는 K3 이미지(vLLM 핀 `0498dc7e`)가 아니라 K3.1 이미지(vLLM main 핀
+`a3c14efb`)다. `io.k3.patchset` 라벨은 K3.1 패치 세트(`docker/patches-k31/`)를 가리켜야 하며,
+K3 patchset(`kda-sm80-int64` 등)이 보이면 잘못된 이미지다. 두 이미지를 섞어 배포하지 않는다.
+@@ELSE@@
 patchset에는 `kda-sm80-int64`, `mxfp4-marlin-moe-sm80-v2`,
 `mla-fp8-kv-sm80-v1`, `dspark-bf16-v1`가 포함되어야 한다. software FP8은
 lane 04/05에서만 opt-in되고, `dspark-bf16-v1`은 lane 05의 RoPE draft cache를
 BF16으로 분리한다.
+@@ENDIF@@
 
 ## 6. Preflight
 
@@ -76,6 +93,13 @@ make preflight
 이 단계는 Compose schema, NFS sentinel, model cache, 네 노드 image digest와 각 8×A100을
 검증한다. 기존 `k3-*` container나 CUDA compute process가 하나라도 있으면
 `PREFLIGHT-K3-CONTAINER-BUSY`/`PREFLIGHT-GPU-BUSY`로 중단한다.
+@@IF K31@@
+
+K3 lane(01–05)과 이 lane은 serving root가 달라 32-GPU cluster lock
+(`<serving-root>/runs/.k3-32gpu.lock`)을 서로 공유하지 않는다. 한쪽 lane의 service나 gate가
+실행 중일 때 다른 쪽을 시작하지 않는다. `make gates`와 `make up`은 먼저 preflight를 거쳐
+막히지만, `make gate-k11` 같은 단독 gate 실행은 preflight를 거치지 않아 막지 못한다.
+@@ENDIF@@
 
 ## 7. Gate 실행
 
@@ -88,6 +112,12 @@ make gates
 이 lane의 선행 gate는 `@@PREREQUISITE_GATES@@`다. 각 gate는 repo commit, image digest,
 `.env` SHA에 묶인 NFS stamp를 남긴다. `K3-GATE-PASS`가 아닌
 `K3-GATE-FAIL/INCOMPLETE/VERIFY-FAIL`이면 serving으로 넘어가지 않는다.
+@@IF K31@@
+
+k11(`k11_dsa_indexer_sm80.json`)과 k12(`k12_sparse_mla_sm80.json`)는 kernel-kit 하네스를
+서빙 이미지 안에서 실행하는 SM80 DSA kernel gate이며 `make gate-k11`, `make gate-k12`로 개별
+실행할 수 있다. PASS는 NUMERIC, SANITIZER, SHAPES 기준이고 PERF는 측정 전용이다.
+@@ENDIF@@
 
 ## 8. Serving 실행
 
@@ -101,6 +131,11 @@ make status
 
 context checkpoint는 `@@CONTEXT_CHECKPOINTS@@` 순서다. @@BASELINE_NOTE@@
 @@DSPARK_INSTRUCTION@@ @@CALIBRATE_INSTRUCTION@@
+@@IF K31@@
+
+`make smoke`는 `/v1/completions` greedy 요청 2회의 출력 동일성과 `/v1/chat/completions`
+`reasoning_effort: "high"` 요청(reasoning 채널이 비어 있지 않고 2회 동일)을 함께 검증한다.
+@@ENDIF@@
 
 `make up`은 head profile을 먼저 시작하고 SSH로 worker1–3 profile을 병렬 시작한다.
 `K3-HEALTH PASS ... expected_ranks=32`와 `K3-UP-PASS`가 모두 보여야 한다.
@@ -110,7 +145,12 @@ context checkpoint는 `@@CONTEXT_CHECKPOINTS@@` 순서다. @@BASELINE_NOTE@@
 - load: 원본 MXFP4 checkpoint profile/first token과 32 rank 초기화 PASS
 - context: `@@CONTEXT_CHECKPOINTS@@` 각 요청이 1 token을 생성
 - memory: context/calibration 종료 후 모든 GPU free HBM ≥5%
+@@IF K31@@
+- topology: lane 11은 PP4 stamp가 현재 env와 일치
+- smoke: greedy completion 2회 동일, `reasoning_effort: "high"` reasoning 채널 관측
+@@ELSE@@
 - topology: lane 01은 PP4, lane 02–05는 DP4/EP32 stamp가 현재 env와 일치
+@@ENDIF@@
 - DSpark=1: 직전 target-only baseline과 greedy output 일치, speculative metric의
   draft 및 accepted position 0–6 관측, draft memory delta 양수
 - `make verify-all-gates`가 `K3-GATE-VERIFY-PASS ... scope=all` 출력
@@ -154,3 +194,6 @@ nvidia-smi
 현재 lane의 `make verify-all-gates`, `make smoke`, `make status`가 PASS이고 정리 후
 잔존 process가 없을 때만 `@@NEXT_LANE@@`로 이동한다. 앞 lane FAIL을 뒤 lane 실행으로
 덮지 않으며, 실행하지 않은 lane은 FAIL이 아니라 `INCOMPLETE`로 둔다.
+@@IF K31@@
+K3.1 P2(DP4/EP32 + DSpark preview)와 1M lane은 아직 구현되지 않았다.
+@@ENDIF@@

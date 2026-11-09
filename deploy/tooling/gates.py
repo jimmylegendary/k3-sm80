@@ -30,6 +30,8 @@ GATE_MATRIX: dict[str, tuple[str, ...]] = {
     "03": ("k08", "c01", "k10", "ep", "dspark"),
     "04": ("k08", "c01", "k09", "ep", "1m"),
     "05": ("k08", "c01", "k09", "k10", "ep", "1m", "dspark"),
+    # K3.1 P1: SM80 DSA indexer(k11)와 sparse MLA(k12) kernel gate가 서빙 전 선행 gate다.
+    "11": ("k08", "kda", "k11", "k12", "pp"),
 }
 
 # These gates can run before a 32-GPU vLLM service owns the cluster.  The
@@ -40,15 +42,28 @@ PREREQUISITE_GATES: dict[str, tuple[str, ...]] = {
     "03": ("k08", "c01"),
     "04": ("k08", "c01", "k09"),
     "05": ("k08", "c01", "k09"),
+    "11": ("k08", "kda", "k11", "k12"),
 }
 
 _REPORT_NAMES = {
     "k08": "k08_mxfp4_marlin_moe.json",
     "k09": "k09_mla_fp8_kv_sm80.json",
     "k10": "k10_k3_dspark_sm80.json",
+    "k11": "k11_dsa_indexer_sm80.json",
+    "k12": "k12_sparse_mla_sm80.json",
     "c01": "c01_ep32_a2a.json",
     "k01": "k01_kda_chunk.json",
     "k02": "k02_kda_recurrent.json",
+}
+
+
+# 컨테이너 안에서 하네스 1개를 `--report-dir`로 실행하는 단독 kernel gate.
+# 하네스 디렉터리 이름은 kernel-kit의 KERNEL_IDS와 같고, 리포트 JSON은 _REPORT_NAMES다.
+_KERNEL_HARNESS_DIRS = {
+    "k08": "k08_mxfp4_marlin_moe",
+    "k09": "k09_mla_fp8_kv_sm80",
+    "k11": "k11_dsa_indexer_sm80",
+    "k12": "k12_sparse_mla_sm80",
 }
 
 
@@ -196,6 +211,8 @@ def _gate_timeout(context: GateContext, gate: str) -> int:
         "k08": 21_600,
         "kda": 7_200,
         "k09": 7_200,
+        "k11": 7_200,
+        "k12": 7_200,
         "c01": 3_600,
     }
     return max(configured, minimums[gate])
@@ -239,32 +256,18 @@ def _generic_gate_commands(
         "python3",
         context.env["K3_IMAGE"],
     ]
-    if gate == "k08":
+    if gate in _KERNEL_HARNESS_DIRS:
         return [
             (
-                "k08",
+                gate,
                 [
                     *container,
-                    "/work/kernel-kit/k08_mxfp4_marlin_moe/harness.py",
+                    f"/work/kernel-kit/{_KERNEL_HARNESS_DIRS[gate]}/harness.py",
                     "--report-dir",
                     str(report_dir),
                     *dry,
                 ],
-                report_dir / _REPORT_NAMES["k08"],
-            )
-        ]
-    if gate == "k09":
-        return [
-            (
-                "k09",
-                [
-                    *container,
-                    "/work/kernel-kit/k09_mla_fp8_kv_sm80/harness.py",
-                    "--report-dir",
-                    str(report_dir),
-                    *dry,
-                ],
-                report_dir / _REPORT_NAMES["k09"],
+                report_dir / _REPORT_NAMES[gate],
             )
         ]
     if gate == "kda":

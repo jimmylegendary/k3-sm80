@@ -32,6 +32,13 @@ BASELINE_PROMPTS = (
     "Return exactly the word OK.",
 )
 DSPARK_MAX_ROUNDS = 8
+@@IF K31@@
+GREEDY_REPRO_PROMPT = "Return OK."
+GREEDY_REPRO_MAX_TOKENS = 16
+REASONING_EFFORT = "high"
+REASONING_PROMPT = "Return exactly the word OK."
+REASONING_MAX_TOKENS = 64
+@@ENDIF@@
 
 
 def _load_env(path: Path) -> dict[str, str]:
@@ -118,6 +125,101 @@ def _choice_text(body: dict[str, Any]) -> str:
     return first["text"]
 
 
+@@IF K31@@
+def _greedy_repro(
+    base_url: str,
+    model: str,
+    timeout: int,
+) -> dict[str, object]:
+    """Same greedy /v1/completions request twice must return identical text."""
+
+    texts = [
+        _choice_text(
+            _completion(
+                base_url,
+                model,
+                GREEDY_REPRO_PROMPT,
+                timeout=timeout,
+                max_tokens=GREEDY_REPRO_MAX_TOKENS,
+            )
+        )
+        for _ in range(2)
+    ]
+    if texts[0] != texts[1]:
+        raise RuntimeError("greedy completion was not reproducible across 2 requests")
+    return {
+        "prompt": GREEDY_REPRO_PROMPT,
+        "max_tokens": GREEDY_REPRO_MAX_TOKENS,
+        "text": texts[0],
+        "reproducible": True,
+    }
+
+
+def _chat_reasoning(
+    base_url: str,
+    model: str,
+    timeout: int,
+) -> dict[str, object]:
+    """One greedy chat call with the top-level ``reasoning_effort`` request field."""
+
+    body = _request(
+        f"{base_url}/v1/chat/completions",
+        method="POST",
+        payload={
+            "model": model,
+            "messages": [{"role": "user", "content": REASONING_PROMPT}],
+            "max_tokens": REASONING_MAX_TOKENS,
+            "temperature": 0,
+            "seed": 1,
+            "reasoning_effort": REASONING_EFFORT,
+        },
+        timeout=timeout,
+    )
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise ValueError("chat completion response has no choices")
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        raise ValueError("chat completion choice has no message")
+    reasoning = message.get("reasoning_content") or message.get("reasoning") or ""
+    content = message.get("content") or ""
+    if not isinstance(reasoning, str) or not isinstance(content, str):
+        raise ValueError("chat message reasoning/content must be strings")
+    return {
+        "reasoning": reasoning,
+        "content": content,
+        "finish_reason": choices[0].get("finish_reason"),
+    }
+
+
+def _reasoning_case(
+    base_url: str,
+    model: str,
+    timeout: int,
+) -> dict[str, object]:
+    """``reasoning_effort: high`` must yield a reasoning channel, reproducibly."""
+
+    first = _chat_reasoning(base_url, model, timeout)
+    second = _chat_reasoning(base_url, model, timeout)
+    if not first["reasoning"]:
+        raise RuntimeError(
+            "reasoning_effort=high returned an empty reasoning channel "
+            "(kimi_k3 reasoning parser or chat template not applied)"
+        )
+    if first != second:
+        raise RuntimeError("greedy reasoning request was not reproducible")
+    return {
+        "reasoning_effort": REASONING_EFFORT,
+        "max_tokens": REASONING_MAX_TOKENS,
+        "reasoning_chars": len(str(first["reasoning"])),
+        "reasoning_head": str(first["reasoning"])[:120],
+        "content_head": str(first["content"])[:120],
+        "finish_reason": first["finish_reason"],
+        "reproducible": True,
+    }
+
+
+@@ENDIF@@
 def _gpu_query_argv(values: dict[str, str], rank: int) -> list[str]:
     query = [
         "nvidia-smi",
@@ -339,6 +441,11 @@ def main() -> int:
         if args.mode in ("smoke", "load"):
             body = _completion(base_url, model, "Return OK.", timeout=timeout)
             evidence["completion"] = _choice_text(body)
+@@IF K31@@
+            if args.mode == "smoke":
+                evidence["greedy_repro"] = _greedy_repro(base_url, model, timeout)
+                evidence["reasoning"] = _reasoning_case(base_url, model, timeout)
+@@ENDIF@@
         elif args.mode == "context":
             evidence["contexts"] = _context_cases(base_url, model, timeout)
         elif args.mode == "baseline":

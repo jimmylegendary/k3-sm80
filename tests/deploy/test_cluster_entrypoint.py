@@ -46,6 +46,39 @@ class ClusterEntrypointTest(unittest.TestCase):
                     expected = ["vllm", "serve", *build_vllm_args(parsed, rank)]
                     self.assertEqual(actual, expected)
 
+    def test_k31_entrypoint_passes_the_sparse_indexer_flag_and_k3_does_not(self) -> None:
+        for spec in LANES:
+            lane = REPO_ROOT / "deploy" / spec.id
+            env = LaneEnv.load(lane / ".env")
+            namespace = runpy.run_path(str(lane / "scripts" / "cluster.py"))
+            with self.subTest(lane=spec.id):
+                with patch.dict(os.environ, env.values, clear=True):
+                    args = namespace["serve_args"](0)
+                if spec.is_k31:
+                    index = args.index("--sparse-indexer-topk-backend")
+                    self.assertEqual(args[index + 1], "persistent")
+                    self.assertEqual(args.count("--sparse-indexer-topk-backend"), 1)
+                    self.assertEqual(
+                        args[args.index("--attention-backend") + 1],
+                        "TRITON_MLA_SPARSE",
+                    )
+                else:
+                    self.assertNotIn("--sparse-indexer-topk-backend", args)
+
+    def test_k31_entrypoint_fails_closed_when_the_topk_key_is_missing(self) -> None:
+        lane = REPO_ROOT / "deploy" / "11-k31-tp8-pp4-256k-safe"
+        env = LaneEnv.load(lane / ".env")
+        values = {
+            key: value
+            for key, value in env.values.items()
+            if key != "VLLM_SPARSE_INDEXER_TOPK_BACKEND"
+        }
+        namespace = runpy.run_path(str(lane / "scripts" / "cluster.py"))
+
+        with patch.dict(os.environ, values, clear=True):
+            with self.assertRaises(KeyError):
+                namespace["serve_args"](0)
+
     def test_worker_profiles_are_headless_but_head_profile_is_not(self) -> None:
         lane = REPO_ROOT / "deploy" / "02-tp8-dp4-ep32-256k-safe"
         env = LaneEnv.load(lane / ".env")

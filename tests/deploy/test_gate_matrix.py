@@ -8,7 +8,9 @@ from unittest.mock import patch
 from deploy.tooling.gates import (
     GATE_MATRIX,
     PREREQUISITE_GATES,
+    _REPORT_NAMES,
     _c01_command,
+    _gate_timeout,
     _generic_gate_commands,
     load_context,
     run_gate,
@@ -23,7 +25,9 @@ EXPECTED = {
     "03": ("k08", "c01", "k10", "ep", "dspark"),
     "04": ("k08", "c01", "k09", "ep", "1m"),
     "05": ("k08", "c01", "k09", "k10", "ep", "1m", "dspark"),
+    "11": ("k08", "kda", "k11", "k12", "pp"),
 }
+K31_LANE_DIR = "11-k31-tp8-pp4-256k-safe"
 
 
 class GateMatrixTest(unittest.TestCase):
@@ -54,6 +58,11 @@ class GateMatrixTest(unittest.TestCase):
                     "calibrate:",
                 ):
                     self.assertIn(target, makefile, spec.id)
+                for target in ("gate-k11:", "gate-k12:"):
+                    if spec.is_k31:
+                        self.assertIn(target, makefile, spec.id)
+                    else:
+                        self.assertNotIn(target, makefile, spec.id)
 
     def test_fp8_lanes_opt_in_and_all_lanes_force_triton_kda(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -99,6 +108,99 @@ class GateMatrixTest(unittest.TestCase):
                 self.assertIn(context.env["K3_IMAGE"], argv)
                 self.assertEqual(argv[argv.index("--entrypoint") + 1], "python3")
                 self.assertTrue(any(item.startswith("/work/kernel-kit/") for item in argv))
+
+    def test_k31_prerequisites_are_the_two_new_kernel_gates_after_k08_and_kda(self) -> None:
+        self.assertEqual(PREREQUISITE_GATES["11"], ("k08", "kda", "k11", "k12"))
+        self.assertEqual(GATE_MATRIX["11"][: len(PREREQUISITE_GATES["11"])], PREREQUISITE_GATES["11"])
+        self.assertEqual(GATE_MATRIX["11"][-1], "pp")
+        self.assertEqual(
+            {key: _REPORT_NAMES[key] for key in ("k11", "k12")},
+            {
+                "k11": "k11_dsa_indexer_sm80.json",
+                "k12": "k12_sparse_mla_sm80.json",
+            },
+        )
+
+    def test_k31_kernel_gates_run_kernel_kit_harness_in_the_k31_image(self) -> None:
+        lane = Path(__file__).resolve().parents[2] / "deploy" / K31_LANE_DIR
+        context = load_context(lane, require_site_values=False)
+        harness = {
+            "k11": "k11_dsa_indexer_sm80",
+            "k12": "k12_sparse_mla_sm80",
+        }
+        for gate, directory in harness.items():
+            with self.subTest(gate=gate):
+                report_dir = context.report_dir(gate)
+                ((name, argv, report),) = _generic_gate_commands(
+                    context,
+                    gate,
+                    report_dir,
+                    cpu_dry_run=False,
+                )
+                self.assertEqual(name, gate)
+                self.assertEqual(argv[:3], ["docker", "run", "--rm"])
+                self.assertIn("--gpus", argv)
+                self.assertEqual(argv[argv.index("--entrypoint") + 1], "python3")
+                self.assertIn(context.env["K3_IMAGE"], argv)
+                self.assertEqual(
+                    context.env["K3_IMAGE"], "k31-sm80-openai:a3c14efb-sm80-v1"
+                )
+                self.assertIn(f"/work/kernel-kit/{directory}/harness.py", argv)
+                self.assertEqual(
+                    argv[argv.index("--report-dir") + 1], str(report_dir)
+                )
+                self.assertNotIn("--cpu-dry-run", argv)
+                self.assertEqual(report, report_dir / f"{directory}.json")
+
+                ((_, dry_argv, _),) = _generic_gate_commands(
+                    context,
+                    gate,
+                    report_dir,
+                    cpu_dry_run=True,
+                )
+                self.assertEqual(dry_argv[-1], "--cpu-dry-run")
+
+    def test_k08_and_k09_harness_paths_are_unchanged_by_the_k11_k12_refactor(self) -> None:
+        lane = Path(__file__).resolve().parents[2] / "deploy" / K31_LANE_DIR
+        context = load_context(lane, require_site_values=False)
+        for gate, directory in (
+            ("k08", "k08_mxfp4_marlin_moe"),
+            ("k09", "k09_mla_fp8_kv_sm80"),
+        ):
+            with self.subTest(gate=gate):
+                report_dir = context.report_dir(gate)
+                ((_, argv, report),) = _generic_gate_commands(
+                    context,
+                    gate,
+                    report_dir,
+                    cpu_dry_run=False,
+                )
+                self.assertIn(f"/work/kernel-kit/{directory}/harness.py", argv)
+                self.assertEqual(report, report_dir / _REPORT_NAMES[gate])
+
+    def test_unregistered_gates_are_rejected_not_silently_accepted(self) -> None:
+        lane = Path(__file__).resolve().parents[2] / "deploy" / K31_LANE_DIR
+        context = load_context(lane, require_site_values=False)
+        for gate in ("k13", "pp", "c01"):
+            with self.subTest(gate=gate):
+                with self.assertRaisesRegex(ValueError, "not a local standalone gate"):
+                    _generic_gate_commands(
+                        context,
+                        gate,
+                        context.report_dir(gate),
+                        cpu_dry_run=True,
+                    )
+
+    def test_k11_k12_timeouts_follow_the_k09_precedent(self) -> None:
+        lane = Path(__file__).resolve().parents[2] / "deploy" / K31_LANE_DIR
+        context = load_context(lane, require_site_values=False)
+        configured = int(context.env["K3_EXECUTE_MODEL_TIMEOUT_S"])
+
+        for gate in ("k09", "k11", "k12"):
+            with self.subTest(gate=gate):
+                self.assertEqual(_gate_timeout(context, gate), max(configured, 7_200))
+        with self.assertRaises(KeyError):
+            _gate_timeout(context, "k13")
 
     def test_c01_runs_one_eight_rank_container_per_node(self) -> None:
         lane = (
