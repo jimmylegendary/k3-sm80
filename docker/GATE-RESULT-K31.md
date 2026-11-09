@@ -32,7 +32,29 @@ K3용 [GATE-RESULT.md](/home/jimmy/repos/k3-sm80/docker/GATE-RESULT.md)와 별�
 - 이미지의 Triton은 **3.8.0**이다. 호스트 CPU 인터프리터 대조는 venv의 3.9.0에서 했고(`kernel-kit/common/triton_interp.py` 보정은 3.9 전용), GPU 컴파일 경로는 영향이 없을 것으로 보지만 **A100에서 k11/k12 커널의 3.8.0 컴파일은 미확인**이다. W1의 sm_80 PTX 컴파일 확인도 호스트 3.9.0 기준이다.
 - 이 티어는 패치 전 base다. 사내 반입 대상은 아래 openai 티어다.
 
-## 2. openai 티어 `k31-sm80-openai:a3c14efb-sm80-v1` — (빌드 진행 중, 2026-11-10 01:19 시작)
+## 2. openai 티어 `k31-sm80-openai:a3c14efb-sm80-v1` — **PASS (CPU 모드 17/17, 경고 0)** (2026-11-10 01:29, 약 10분)
 
-패치 3개(`docker/patches-k31/`) 적용 → `_moe_C_stable_libtorch` 재컴파일 → Python overlay 10파일 → `verify_k31_image.py`(CPU 모드: static·import·cli, gpu 섹션은 SKIP 명시).
-결과는 완료 후 이 절에 기입한다.
+| 항목 | 값 |
+|---|---|
+| 이미지 ID | `sha256:f5ea76f4f007019ee2098d886582bf79faaa1c506d885292e8292f432bd2e40b` |
+| 크기 | 20,726,581,453 B (20.7 GB) |
+| base | `k31-sm80-kernelkit:full-a3c14efb` (`io.k3.base_digest` 라벨로 고정, §1) |
+| patchset | `mxfp4-marlin-moe-sm80-main+triton-mla-sparse-sm80+k31-sm80-dsa-glue` (`/opt/k31-patches/`, `patches.sha256`) |
+| 빌드 로그 | `docker/logs/k31-openai-20261110-011957.log`(gitignored) |
+
+### `verify_k31_image.py`(CPU 모드) 결과 원문 요지
+
+| 섹션 | 검사 | 결과 |
+|---|---|---|
+| static | torch-cuda(torch 2.14.0+cu130, cuda 13.0, arch 목록에 sm_80) · overlay-manifest(10파일 일치) · shipped-patches(3개, `patches.sha256` 일치) · moe-so(설치 `.so` == marlin 패치 빌드본) · deepgemm-absent · kimi-k3-dsa-code(`dsa.py` 존재) · compute-sanitizer | 전부 PASS |
+| import(CPU) | `vllm.entrypoints.openai.api_server` · `kimi_k3_tool_parser` · `kimi_k3_reasoning_parser` · `vllm.models.kimi_k3.nvidia.dsa` · `vllm.v1.attention.ops.mqa_logits_triton` · `…triton_mla_sparse_kernel` · `torch.ops._moe_C.moe_wna16_marlin_gemm` 등록 · `AttentionBackendEnum.TRITON_MLA_SPARSE` → `TritonMLASparseBackend`(mla+sparse, sm80) | 전부 PASS |
+| cli | `vllm serve --help` 필수 플래그 25개 | PASS |
+| gpu | — | **SKIP**(CPU 모드: GPU 동작 미검증 — A100 노드에서 `--gpu`로 재실행) |
+
+`K31-OPENAI-VERIFY-PASS image=k31-sm80-openai:a3c14efb-sm80-v1 id=sha256:f5ea76f4… mode=cpu checks=17 warnings=0`
+
+### 정직한 상한
+이 PASS는 "이미지가 계약대로 조립됐고 CPU에서 import된다"까지다. 커널 실행·백엔드 선택·서빙은 사내 A100에서 `python3 docker/verify_k31_image.py <image> --gpu` → `run/21` → lane 11 smoke 순으로 판정한다.
+
+## 3. Release
+`K31_OPENAI_GITHUB_UPLOAD=1 bash docker/release-k31.sh` → GitHub Release `openai-k31-a3c14efb-sm80-v1`(docker save → zstd → 1900 MB 분할, `SHA256SUMS`). 결과는 완료 후 기입.
